@@ -16,6 +16,20 @@ The sidecar takes its tensors from the ashbash Q8_0 file. The BF16 fetch is the 
 every head tensor and compares it with the BF16 truth before it writes anything (rel. error <= 1.5e-2 for Q8_0, norms
 checked as 1+w). A head that does not match is refused.
 
+## Why Q8_0, and what each file buys
+
+| choice | quality | speed (Radeon 890M, IQ3_S main model, draft depth 3) |
+|---|---|---|
+| no draft (plain) | reference | 12.01 / 11.89 t/s (short / long prompt) |
+| this sidecar, Q8_0 head | same greedy output: the main model verifies every drafted token | 19.68 / 17.70 t/s; draft acceptance 91.5% / 78.2% |
+| `-dven40k` (40,525-token draft vocabulary) | same greedy output | 20.24 / 19.45 t/s; +4.6% to +8.7% over the full-vocabulary sidecar on all 6 test requests |
+| 106K-token draft vocabulary | same greedy output | no gain (-8.9% to +3.5%); not shipped |
+| BF16 head | same greedy output | not measured served yet (A/B queued); it reads twice the bytes per draft step |
+
+The head only decides how many drafted tokens are accepted, so its precision moves speed, never the answer. Q8_0 is
+within 1.5e-2 relative error of the BF16 weights on every tensor (checked by `build_sidecar.py`, which refuses a worse
+head) and is half the size the GPU reads on each draft step.
+
 ## Steps
 
 ```

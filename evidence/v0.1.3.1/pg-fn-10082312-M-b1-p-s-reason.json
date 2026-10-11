@@ -1,0 +1,35 @@
+{
+ "prompt_file": "C:\\ArifiLabs\\cache\\mtp-x1-lane\\cells\\pgc-reason.txt",
+ "path": "chat",
+ "regime": "sampled",
+ "sampling": {
+  "temperature": 0.7,
+  "top_k": 40,
+  "top_p": 0.95,
+  "min_p": 0.05,
+  "seed": 298
+ },
+ "ttft_ms": 2078.6,
+ "wall_s": 52.76,
+ "timings": {
+  "cache_n": 0,
+  "prompt_n": 161,
+  "prompt_ms": 2025.702,
+  "prompt_per_token_ms": 12.582,
+  "prompt_per_second": 79.47862025115244,
+  "predicted_n": 768,
+  "predicted_ms": 50685.586,
+  "predicted_per_token_ms": 66.08290221642764,
+  "predicted_per_second": 15.132507297044961,
+  "draft_n": 602,
+  "draft_n_accepted": 438
+ },
+ "tokens": null,
+ "content": "",
+ "draft_n": 602,
+ "draft_n_accepted": 438,
+ "reasoning_content": "We need solve problem step by step, check calculations. Need produce final. Let's analyze carefully.\n\nProblem: Train A leaves city A at 09:10 toward B, speed 84 km/h. Distance A-B = 391 km. Second train leaves B at 10:05 toward A, speed 106 km/h. Bird starts at A together with first train and flies at 150 km/h back and forth between two trains until they meet. When and where do trains meet, how far bird fly? Need reason step by step and check every calculation.\n\nNeed consider bird starts at A at 09:10, flies? It says starts at A together with first train and flies at 150 km/h back and forth between the two trains until they meet. Ambiguity: before second train leaves at 10:05, bird flies from A toward B? It starts at A with first train, and flies back and forth between the two trains. Since second train not started until 10:05, bird likely flies toward B (ahead of first train?) at 150 km/h until it meets second train? But second train not present until 10:05 at B. What does bird do between 09:10 and 10:05? It could fly toward B at 150 km/h, maybe turn around? The classic bird between trains starts when both trains start? Here bird starts with first train at 09:10 and flies between trains until they meet. Need interpret. Could bird fly at 150 km/h back and forth between the two trains; but before second train leaves, there is only one train. Maybe bird flies from A toward B and waits? Or flies back and forth between A and first train? Need parse.\n\nMaybe intended: bird starts at A together with first train at 09:10 and flies toward B at 150 km/h, reaches B exactly when second train leaves? Let's check: distance 391 km, speed 150, time 391/150 = 2.6067 h = 2h36m24s, arriving 11:46:24, after second train left and before trains meet maybe. Not likely.\n\nIf bird starts at A at 09:10 and flies at 150 km/h back and forth between the two trains until they meet: The bird could be flying back and forth between city A and train A? But says between two trains. Second train absent. Perhaps they ignore until second train starts? But then bird distance would be from 09:10 to meeting time at 150 km/h, if bird is continuously flying, regardless of what it flies between. Classic solution: bird distance = speed * time from start until trains meet. Start bird at 09:10, meet time computed. If bird continuously flies until trains meet, distance = 150*(meeting time - 09:10). The back-and-forth details irrelevant. But if bird cannot fly until second train exists? It says starts at A together with first train, so it flies from 09:10. Yes.\n\nNeed compute meet time. Train A leaves 09:10, train B leaves 10:05. At 10:05, train A has traveled 55 min = 55/60 h = 11/12 h. Distance traveled = 84 * 11/1",
+ "text_all": "We need solve problem step by step, check calculations. Need produce final. Let's analyze carefully.\n\nProblem: Train A leaves city A at 09:10 toward B, speed 84 km/h. Distance A-B = 391 km. Second train leaves B at 10:05 toward A, speed 106 km/h. Bird starts at A together with first train and flies at 150 km/h back and forth between two trains until they meet. When and where do trains meet, how far bird fly? Need reason step by step and check every calculation.\n\nNeed consider bird starts at A at 09:10, flies? It says starts at A together with first train and flies at 150 km/h back and forth between the two trains until they meet. Ambiguity: before second train leaves at 10:05, bird flies from A toward B? It starts at A with first train, and flies back and forth between the two trains. Since second train not started until 10:05, bird likely flies toward B (ahead of first train?) at 150 km/h until it meets second train? But second train not present until 10:05 at B. What does bird do between 09:10 and 10:05? It could fly toward B at 150 km/h, maybe turn around? The classic bird between trains starts when both trains start? Here bird starts with first train at 09:10 and flies between trains until they meet. Need interpret. Could bird fly at 150 km/h back and forth between the two trains; but before second train leaves, there is only one train. Maybe bird flies from A toward B and waits? Or flies back and forth between A and first train? Need parse.\n\nMaybe intended: bird starts at A together with first train at 09:10 and flies toward B at 150 km/h, reaches B exactly when second train leaves? Let's check: distance 391 km, speed 150, time 391/150 = 2.6067 h = 2h36m24s, arriving 11:46:24, after second train left and before trains meet maybe. Not likely.\n\nIf bird starts at A at 09:10 and flies at 150 km/h back and forth between the two trains until they meet: The bird could be flying back and forth between city A and train A? But says between two trains. Second train absent. Perhaps they ignore until second train starts? But then bird distance would be from 09:10 to meeting time at 150 km/h, if bird is continuously flying, regardless of what it flies between. Classic solution: bird distance = speed * time from start until trains meet. Start bird at 09:10, meet time computed. If bird continuously flies until trains meet, distance = 150*(meeting time - 09:10). The back-and-forth details irrelevant. But if bird cannot fly until second train exists? It says starts at A together with first train, so it flies from 09:10. Yes.\n\nNeed compute meet time. Train A leaves 09:10, train B leaves 10:05. At 10:05, train A has traveled 55 min = 55/60 h = 11/12 h. Distance traveled = 84 * 11/1\u001e",
+ "finish_reason": "length",
+ "answer_reached": false
+}

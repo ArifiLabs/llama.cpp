@@ -1,0 +1,968 @@
+{
+  "run_id": "kvzp-10091505",
+  "state": "kvzp-gpu-complete",
+  "pid": 14996,
+  "started_utc": "2026-10-09T19:05:03.9438699Z",
+  "head": "3462b81fc83559169b0dc4e82cf412bb9005bae3",
+  "arms": [
+    {
+      "arm": "QM-B1",
+      "args": [
+        "-m",
+        "D:\\ArifiLabs\\models\\hf\\ISTA-DASLab\\Qwen3.8-Flash-Next-GSQ-RCO-GGUF\\IQ3_S\\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
+        "-ngl",
+        "999",
+        "-np",
+        "1",
+        "-fa",
+        "on",
+        "--lazy-mode",
+        "on",
+        "-c",
+        "4096",
+        "-lm",
+        "dio",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "-md",
+        "E:\\ArifiLabs\\models\\hf\\Qwen\\Qwen3.8-Flash-Next-MTP\\mtp-sidecar-qwen4exp-q8_0.gguf",
+        "-ngld",
+        "999",
+        "--spec-type",
+        "draft-mtp",
+        "--spec-draft-n-max",
+        "3",
+        "--spec-draft-p-min",
+        "0.5"
+      ],
+      "env": {
+        "LLAMA_ARIFI_KV_ZERO_PROBE": "1",
+        "GGML_VK_MEMSET_BATCH_LOG": "1"
+      },
+      "cap_bytes": 0,
+      "nonpaged_before": 2538082304.0,
+      "started_utc": "2026-10-09T19:05:41.0100059Z",
+      "healthy": true,
+      "peak_ws_bytes": 1406697472,
+      "peak_private_bytes": 64703242240,
+      "min_avail_bytes": 12652015616,
+      "avail_before_bytes": 14985322496,
+      "requests": [
+        {
+          "tag": "kvzp-10091505-QM-B1-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=1.96 ttft_ms=6150.7 gen_n=8 decode_tps=3.91 draft=5/5"
+        },
+        {
+          "tag": "kvzp-10091505-QM-B1-k1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=28.94 ttft_ms=435.2 gen_n=128 decode_tps=17.72 draft=87/92"
+        },
+        {
+          "tag": "kvzp-10091505-QM-B1-k1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=90.89 ttft_ms=6616.8 gen_n=128 decode_tps=17.65 draft=84/112"
+        },
+        {
+          "tag": "kvzp-10091505-QM-B1-k2-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=29.38 ttft_ms=467.1 gen_n=128 decode_tps=19.89 draft=87/92"
+        },
+        {
+          "tag": "kvzp-10091505-QM-B1-k2-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=148.04 ttft_ms=4105.0 gen_n=128 decode_tps=17.99 draft=84/112"
+        },
+        {
+          "tag": "kvzp-10091505-QM-B1-k3-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=29.2 ttft_ms=453.9 gen_n=128 decode_tps=19.79 draft=87/92"
+        },
+        {
+          "tag": "kvzp-10091505-QM-B1-k3-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=147.33 ttft_ms=4122.2 gen_n=128 decode_tps=17.73 draft=84/112"
+        },
+        {
+          "tag": "kvzp-10091505-QM-B1-k4-short",
+          "exit": 0,
+          "summary": "path=completion regime=sampled prompt_n=12 prefill_tps=28.97 ttft_ms=453.2 gen_n=128 decode_tps=18.42 draft=85/103"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 27972,
+      "load_s": 78.5,
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.18.776.796 I common_speculative_init_result: loading draft model 'E:\\ArifiLabs\\models\\hf\\Qwen\\Qwen3.8-Flash-Next-MTP\\mtp-sidecar-qwen4exp-q8_0.gguf'\r",
+        "1.26.547.064 I slot print_timing: id  0 | task 0 | draft acceptance = 1.00000 (    5 accepted /     5 generated), mean len =  3.50\r",
+        "1.26.547.065 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 5 accepted)\r",
+        "1.26.547.067 I slot print_timing: id  0 | task 0 | spec round cost  = draft 224689 us/2, verify 1410926 us/2, plain 0 us/0, process 149087 us, save 0 us, restore 0 us\r",
+        "1.36.284.294 I slot print_timing: id  0 | task 5 | draft acceptance = 0.94565 (   87 accepted /    92 generated), mean len =  3.49\r",
+        "1.36.284.295 I slot print_timing: id  0 | task 5 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 87 accepted)\r",
+        "1.36.284.297 I slot print_timing: id  0 | task 5 | spec round cost  = draft 1120629 us/40, verify 4740790 us/35, plain 1101520 us/5, process 148864 us, save 0 us, restore 0 us\r",
+        "1.50.564.110 I slot print_timing: id  0 | task 48 | draft acceptance = 0.75000 (   84 accepted /   112 generated), mean len =  3.15\r",
+        "1.50.564.113 I slot print_timing: id  0 | task 48 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 84 accepted)\r",
+        "1.50.564.115 I slot print_timing: id  0 | task 48 | spec round cost  = draft 1240493 us/42, verify 5345947 us/39, plain 369005 us/4, process 178178 us, save 0 us, restore 0 us\r",
+        "1.57.683.342 I slot print_timing: id  0 | task 95 | draft acceptance = 0.94565 (   87 accepted /    92 generated), mean len =  3.49\r",
+        "1.57.683.343 I slot print_timing: id  0 | task 95 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 87 accepted)\r",
+        "1.57.683.351 I slot print_timing: id  0 | task 95 | spec round cost  = draft 1125815 us/40, verify 4582707 us/35, plain 451897 us/5, process 169777 us, save 0 us, restore 0 us\r",
+        "2.10.051.478 I slot print_timing: id  0 | task 138 | draft acceptance = 0.75000 (   84 accepted /   112 generated), mean len =  3.15\r",
+        "2.10.051.480 I slot print_timing: id  0 | task 138 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 84 accepted)\r",
+        "2.10.051.484 I slot print_timing: id  0 | task 138 | spec round cost  = draft 1226728 us/42, verify 5264855 us/39, plain 378065 us/4, process 117447 us, save 0 us, restore 0 us\r",
+        "2.17.838.746 I slot print_timing: id  0 | task 185 | draft acceptance = 0.94565 (   87 accepted /    92 generated), mean len =  3.49\r",
+        "2.17.838.748 I slot print_timing: id  0 | task 185 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 87 accepted)\r",
+        "2.17.838.751 I slot print_timing: id  0 | task 185 | spec round cost  = draft 1122136 us/40, verify 4630774 us/35, plain 462098 us/5, process 140258 us, save 0 us, restore 0 us\r",
+        "2.30.362.916 I slot print_timing: id  0 | task 228 | draft acceptance = 0.75000 (   84 accepted /   112 generated), mean len =  3.15\r",
+        "2.30.362.918 I slot print_timing: id  0 | task 228 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 84 accepted)\r",
+        "2.30.362.924 I slot print_timing: id  0 | task 228 | spec round cost  = draft 1267935 us/42, verify 5265962 us/39, plain 383259 us/4, process 169159 us, save 0 us, restore 0 us\r",
+        "2.38.526.356 I slot print_timing: id  0 | task 275 | draft acceptance = 0.82524 (   85 accepted /   103 generated), mean len =  3.18\r",
+        "2.38.526.369 I slot print_timing: id  0 | task 275 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 85 accepted)\r",
+        "2.38.526.372 I slot print_timing: id  0 | task 275 | spec round cost  = draft 1218898 us/42, verify 5155266 us/39, plain 279410 us/3, process 173337 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-09T19:08:23.5949325Z"
+    },
+    {
+      "arm": "QM-B0",
+      "args": [
+        "-m",
+        "D:\\ArifiLabs\\models\\hf\\ISTA-DASLab\\Qwen3.8-Flash-Next-GSQ-RCO-GGUF\\IQ3_S\\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
+        "-ngl",
+        "999",
+        "-np",
+        "1",
+        "-fa",
+        "on",
+        "--lazy-mode",
+        "on",
+        "-c",
+        "4096",
+        "-lm",
+        "dio",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "-md",
+        "E:\\ArifiLabs\\models\\hf\\Qwen\\Qwen3.8-Flash-Next-MTP\\mtp-sidecar-qwen4exp-q8_0.gguf",
+        "-ngld",
+        "999",
+        "--spec-type",
+        "draft-mtp",
+        "--spec-draft-n-max",
+        "3",
+        "--spec-draft-p-min",
+        "0.5"
+      ],
+      "env": {
+        "LLAMA_ARIFI_KV_ZERO_PROBE": "1",
+        "GGML_VK_MEMSET_BATCH": "0",
+        "GGML_VK_MEMSET_BATCH_LOG": "1"
+      },
+      "cap_bytes": 0,
+      "nonpaged_before": 2540675072.0,
+      "started_utc": "2026-10-09T19:08:56.0557296Z",
+      "healthy": true,
+      "peak_ws_bytes": 1284849664,
+      "peak_private_bytes": 64515592192,
+      "min_avail_bytes": 12759719936,
+      "avail_before_bytes": 14585933824,
+      "requests": [
+        {
+          "tag": "kvzp-10091505-QM-B0-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=18.15 ttft_ms=682.5 gen_n=8 decode_tps=14.52 draft=5/5"
+        },
+        {
+          "tag": "kvzp-10091505-QM-B0-k1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=29.59 ttft_ms=426.0 gen_n=128 decode_tps=19.55 draft=87/92"
+        },
+        {
+          "tag": "kvzp-10091505-QM-B0-k1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=119.36 ttft_ms=5040.5 gen_n=128 decode_tps=17.64 draft=84/112"
+        },
+        {
+          "tag": "kvzp-10091505-QM-B0-k2-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=29.3 ttft_ms=460.0 gen_n=128 decode_tps=19.92 draft=87/92"
+        },
+        {
+          "tag": "kvzp-10091505-QM-B0-k2-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=149.26 ttft_ms=4069.3 gen_n=128 decode_tps=17.96 draft=84/112"
+        },
+        {
+          "tag": "kvzp-10091505-QM-B0-k3-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=29.11 ttft_ms=460.3 gen_n=128 decode_tps=19.84 draft=87/92"
+        },
+        {
+          "tag": "kvzp-10091505-QM-B0-k3-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=145.52 ttft_ms=4174.2 gen_n=128 decode_tps=17.88 draft=84/112"
+        },
+        {
+          "tag": "kvzp-10091505-QM-B0-k4-short",
+          "exit": 0,
+          "summary": "path=completion regime=sampled prompt_n=12 prefill_tps=28.64 ttft_ms=478.2 gen_n=128 decode_tps=18.43 draft=85/103"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 28196,
+      "load_s": 73.3,
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.14.786.211 I common_speculative_init_result: loading draft model 'E:\\ArifiLabs\\models\\hf\\Qwen\\Qwen3.8-Flash-Next-MTP\\mtp-sidecar-qwen4exp-q8_0.gguf'\r",
+        "1.14.662.056 I slot print_timing: id  0 | task 0 | draft acceptance = 1.00000 (    5 accepted /     5 generated), mean len =  3.50\r",
+        "1.14.662.057 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 5 accepted)\r",
+        "1.14.662.060 I slot print_timing: id  0 | task 0 | spec round cost  = draft 81829 us/2, verify 372048 us/2, plain 0 us/0, process 25277 us, save 0 us, restore 0 us\r",
+        "1.22.426.567 I slot print_timing: id  0 | task 5 | draft acceptance = 0.94565 (   87 accepted /    92 generated), mean len =  3.49\r",
+        "1.22.426.568 I slot print_timing: id  0 | task 5 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 87 accepted)\r",
+        "1.22.426.572 I slot print_timing: id  0 | task 5 | spec round cost  = draft 1088033 us/40, verify 4719101 us/35, plain 544096 us/5, process 91035 us, save 0 us, restore 0 us\r",
+        "1.35.806.074 I slot print_timing: id  0 | task 48 | draft acceptance = 0.75000 (   84 accepted /   112 generated), mean len =  3.15\r",
+        "1.35.806.075 I slot print_timing: id  0 | task 48 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 84 accepted)\r",
+        "1.35.806.078 I slot print_timing: id  0 | task 48 | spec round cost  = draft 1247845 us/42, verify 5356489 us/39, plain 370849 us/4, process 166230 us, save 0 us, restore 0 us\r",
+        "1.44.478.241 I slot print_timing: id  0 | task 95 | draft acceptance = 0.94565 (   87 accepted /    92 generated), mean len =  3.49\r",
+        "1.44.478.242 I slot print_timing: id  0 | task 95 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 87 accepted)\r",
+        "1.44.478.244 I slot print_timing: id  0 | task 95 | spec round cost  = draft 1124247 us/40, verify 4572165 us/35, plain 459392 us/5, process 164221 us, save 0 us, restore 0 us\r",
+        "1.56.874.233 I slot print_timing: id  0 | task 138 | draft acceptance = 0.75000 (   84 accepted /   112 generated), mean len =  3.15\r",
+        "1.56.874.235 I slot print_timing: id  0 | task 138 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 84 accepted)\r",
+        "1.56.874.237 I slot print_timing: id  0 | task 138 | spec round cost  = draft 1249157 us/42, verify 5210758 us/39, plain 367567 us/4, process 183908 us, save 0 us, restore 0 us\r",
+        "2.04.679.991 I slot print_timing: id  0 | task 185 | draft acceptance = 0.94565 (   87 accepted /    92 generated), mean len =  3.49\r",
+        "2.04.679.992 I slot print_timing: id  0 | task 185 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 87 accepted)\r",
+        "2.04.679.996 I slot print_timing: id  0 | task 185 | spec round cost  = draft 1113401 us/40, verify 4607372 us/35, plain 455614 us/5, process 165596 us, save 0 us, restore 0 us\r",
+        "2.17.165.354 I slot print_timing: id  0 | task 228 | draft acceptance = 0.75000 (   84 accepted /   112 generated), mean len =  3.15\r",
+        "2.17.165.355 I slot print_timing: id  0 | task 228 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 84 accepted)\r",
+        "2.17.165.357 I slot print_timing: id  0 | task 228 | spec round cost  = draft 1235574 us/42, verify 5270371 us/39, plain 385097 us/4, process 135038 us, save 0 us, restore 0 us\r",
+        "2.25.355.264 I slot print_timing: id  0 | task 275 | draft acceptance = 0.82524 (   85 accepted /   103 generated), mean len =  3.18\r",
+        "2.25.355.267 I slot print_timing: id  0 | task 275 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 85 accepted)\r",
+        "2.25.355.272 I slot print_timing: id  0 | task 275 | spec round cost  = draft 1204972 us/42, verify 5156502 us/39, plain 274632 us/3, process 184245 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-09T19:11:25.3159579Z"
+    },
+    {
+      "arm": "QM-Z0",
+      "args": [
+        "-m",
+        "D:\\ArifiLabs\\models\\hf\\ISTA-DASLab\\Qwen3.8-Flash-Next-GSQ-RCO-GGUF\\IQ3_S\\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
+        "-ngl",
+        "999",
+        "-np",
+        "1",
+        "-fa",
+        "on",
+        "--lazy-mode",
+        "on",
+        "-c",
+        "4096",
+        "-lm",
+        "dio",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "-md",
+        "E:\\ArifiLabs\\models\\hf\\Qwen\\Qwen3.8-Flash-Next-MTP\\mtp-sidecar-qwen4exp-q8_0.gguf",
+        "-ngld",
+        "999",
+        "--spec-type",
+        "draft-mtp",
+        "--spec-draft-n-max",
+        "3",
+        "--spec-draft-p-min",
+        "0.5"
+      ],
+      "env": {
+        "LLAMA_ARIFI_KV_ZERO_FREED": "0",
+        "LLAMA_ARIFI_KV_ZERO_PROBE": "1",
+        "GGML_VK_MEMSET_BATCH_LOG": "1"
+      },
+      "cap_bytes": 0,
+      "nonpaged_before": 2550693888.0,
+      "started_utc": "2026-10-09T19:11:57.8677905Z",
+      "healthy": true,
+      "peak_ws_bytes": 1285439488,
+      "peak_private_bytes": 64546922496,
+      "min_avail_bytes": 11386306560,
+      "avail_before_bytes": 13691985920,
+      "requests": [
+        {
+          "tag": "kvzp-10091505-QM-Z0-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=15.41 ttft_ms=799.4 gen_n=8 decode_tps=14.2 draft=5/5"
+        },
+        {
+          "tag": "kvzp-10091505-QM-Z0-k1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=25.15 ttft_ms=516.7 gen_n=128 decode_tps=17.36 draft=87/92"
+        },
+        {
+          "tag": "kvzp-10091505-QM-Z0-k1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=118.03 ttft_ms=5093.7 gen_n=128 decode_tps=17.21 draft=84/112"
+        },
+        {
+          "tag": "kvzp-10091505-QM-Z0-k2-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=27.3 ttft_ms=498.6 gen_n=128 decode_tps=19.43 draft=87/92"
+        },
+        {
+          "tag": "kvzp-10091505-QM-Z0-k2-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=147.1 ttft_ms=4137.4 gen_n=128 decode_tps=17.58 draft=84/112"
+        },
+        {
+          "tag": "kvzp-10091505-QM-Z0-k3-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=28.56 ttft_ms=466.0 gen_n=128 decode_tps=19.68 draft=87/92"
+        },
+        {
+          "tag": "kvzp-10091505-QM-Z0-k3-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=146.27 ttft_ms=4160.8 gen_n=128 decode_tps=17.87 draft=84/112"
+        },
+        {
+          "tag": "kvzp-10091505-QM-Z0-k4-short",
+          "exit": 0,
+          "summary": "path=completion regime=sampled prompt_n=12 prefill_tps=28.55 ttft_ms=457.6 gen_n=128 decode_tps=18.41 draft=85/103"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 14888,
+      "load_s": 74.4,
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.15.743.602 I common_speculative_init_result: loading draft model 'E:\\ArifiLabs\\models\\hf\\Qwen\\Qwen3.8-Flash-Next-MTP\\mtp-sidecar-qwen4exp-q8_0.gguf'\r",
+        "1.15.825.319 I slot print_timing: id  0 | task 0 | draft acceptance = 1.00000 (    5 accepted /     5 generated), mean len =  3.50\r",
+        "1.15.825.320 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 5 accepted)\r",
+        "1.15.825.322 I slot print_timing: id  0 | task 0 | spec round cost  = draft 81647 us/2, verify 386706 us/2, plain 0 us/0, process 21162 us, save 0 us, restore 0 us\r",
+        "1.24.394.222 I slot print_timing: id  0 | task 5 | draft acceptance = 0.94565 (   87 accepted /    92 generated), mean len =  3.49\r",
+        "1.24.394.224 I slot print_timing: id  0 | task 5 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 87 accepted)\r",
+        "1.24.394.229 I slot print_timing: id  0 | task 5 | spec round cost  = draft 1186524 us/40, verify 5245004 us/35, plain 642904 us/5, process 135711 us, save 0 us, restore 0 us\r",
+        "1.39.095.602 I slot print_timing: id  0 | task 48 | draft acceptance = 0.75000 (   84 accepted /   112 generated), mean len =  3.15\r",
+        "1.39.095.604 I slot print_timing: id  0 | task 48 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 84 accepted)\r",
+        "1.39.095.609 I slot print_timing: id  0 | task 48 | spec round cost  = draft 1290330 us/42, verify 5452888 us/39, plain 405868 us/4, process 135860 us, save 0 us, restore 0 us\r",
+        "1.47.759.283 I slot print_timing: id  0 | task 95 | draft acceptance = 0.94565 (   87 accepted /    92 generated), mean len =  3.49\r",
+        "1.47.759.288 I slot print_timing: id  0 | task 95 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 87 accepted)\r",
+        "1.47.759.292 I slot print_timing: id  0 | task 95 | spec round cost  = draft 1120541 us/40, verify 4690290 us/35, plain 497014 us/5, process 154400 us, save 0 us, restore 0 us\r",
+        "2.00.165.570 I slot print_timing: id  0 | task 138 | draft acceptance = 0.75000 (   84 accepted /   112 generated), mean len =  3.15\r",
+        "2.00.165.572 I slot print_timing: id  0 | task 138 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 84 accepted)\r",
+        "2.00.165.578 I slot print_timing: id  0 | task 138 | spec round cost  = draft 1270639 us/42, verify 5310519 us/39, plain 400843 us/4, process 159684 us, save 0 us, restore 0 us\r",
+        "2.07.811.296 I slot print_timing: id  0 | task 185 | draft acceptance = 0.94565 (   87 accepted /    92 generated), mean len =  3.49\r",
+        "2.07.811.299 I slot print_timing: id  0 | task 185 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 87 accepted)\r",
+        "2.07.811.303 I slot print_timing: id  0 | task 185 | spec round cost  = draft 1113159 us/40, verify 4649458 us/35, plain 468405 us/5, process 159130 us, save 0 us, restore 0 us\r",
+        "2.20.232.021 I slot print_timing: id  0 | task 228 | draft acceptance = 0.75000 (   84 accepted /   112 generated), mean len =  3.15\r",
+        "2.20.232.023 I slot print_timing: id  0 | task 228 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 84 accepted)\r",
+        "2.20.232.026 I slot print_timing: id  0 | task 228 | spec round cost  = draft 1236258 us/42, verify 5269761 us/39, plain 387173 us/4, process 136899 us, save 0 us, restore 0 us\r",
+        "2.28.420.677 I slot print_timing: id  0 | task 275 | draft acceptance = 0.82524 (   85 accepted /   103 generated), mean len =  3.18\r",
+        "2.28.420.680 I slot print_timing: id  0 | task 275 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 85 accepted)\r",
+        "2.28.420.683 I slot print_timing: id  0 | task 275 | spec round cost  = draft 1190079 us/42, verify 5197187 us/39, plain 285773 us/3, process 147815 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-09T19:14:30.2463993Z"
+    },
+    {
+      "arm": "QM-P",
+      "args": [
+        "-m",
+        "D:\\ArifiLabs\\models\\hf\\ISTA-DASLab\\Qwen3.8-Flash-Next-GSQ-RCO-GGUF\\IQ3_S\\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
+        "-ngl",
+        "999",
+        "-np",
+        "1",
+        "-fa",
+        "on",
+        "--lazy-mode",
+        "on",
+        "-c",
+        "4096",
+        "-lm",
+        "dio",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "-md",
+        "E:\\ArifiLabs\\models\\hf\\Qwen\\Qwen3.8-Flash-Next-MTP\\mtp-sidecar-qwen4exp-q8_0.gguf",
+        "-ngld",
+        "999",
+        "--spec-type",
+        "draft-mtp",
+        "--spec-draft-n-max",
+        "3",
+        "--spec-draft-p-min",
+        "0.5"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 2597220352.0,
+      "started_utc": "2026-10-09T19:15:02.7279345Z",
+      "healthy": true,
+      "peak_ws_bytes": 1286791168,
+      "peak_private_bytes": 64530710528,
+      "min_avail_bytes": 12207083520,
+      "avail_before_bytes": 13829238784,
+      "requests": [
+        {
+          "tag": "kvzp-10091505-QM-P-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=18.32 ttft_ms=680.0 gen_n=8 decode_tps=15.36 draft=5/5"
+        },
+        {
+          "tag": "kvzp-10091505-QM-P-k1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=29.35 ttft_ms=448.2 gen_n=128 decode_tps=19.5 draft=87/92"
+        },
+        {
+          "tag": "kvzp-10091505-QM-P-k1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=127.2 ttft_ms=4731.2 gen_n=128 decode_tps=17.75 draft=84/112"
+        },
+        {
+          "tag": "kvzp-10091505-QM-P-k2-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=29.0 ttft_ms=450.6 gen_n=128 decode_tps=20.14 draft=87/92"
+        },
+        {
+          "tag": "kvzp-10091505-QM-P-k2-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=145.3 ttft_ms=4223.6 gen_n=128 decode_tps=18.03 draft=84/112"
+        },
+        {
+          "tag": "kvzp-10091505-QM-P-k3-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=29.24 ttft_ms=449.3 gen_n=128 decode_tps=19.72 draft=87/92"
+        },
+        {
+          "tag": "kvzp-10091505-QM-P-k3-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=147.16 ttft_ms=4148.4 gen_n=128 decode_tps=17.82 draft=84/112"
+        },
+        {
+          "tag": "kvzp-10091505-QM-P-k4-short",
+          "exit": 0,
+          "summary": "path=completion regime=sampled prompt_n=12 prefill_tps=28.86 ttft_ms=469.0 gen_n=128 decode_tps=18.42 draft=85/103"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 31060,
+      "load_s": 73.8,
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.15.289.635 I common_speculative_init_result: loading draft model 'E:\\ArifiLabs\\models\\hf\\Qwen\\Qwen3.8-Flash-Next-MTP\\mtp-sidecar-qwen4exp-q8_0.gguf'\r",
+        "1.14.827.141 I slot print_timing: id  0 | task 0 | draft acceptance = 1.00000 (    5 accepted /     5 generated), mean len =  3.50\r",
+        "1.14.827.142 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 5 accepted)\r",
+        "1.14.827.144 I slot print_timing: id  0 | task 0 | spec round cost  = draft 79801 us/2, verify 352010 us/2, plain 0 us/0, process 21154 us, save 0 us, restore 0 us\r",
+        "1.22.681.519 I slot print_timing: id  0 | task 5 | draft acceptance = 0.94565 (   87 accepted /    92 generated), mean len =  3.49\r",
+        "1.22.681.520 I slot print_timing: id  0 | task 5 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 87 accepted)\r",
+        "1.22.681.522 I slot print_timing: id  0 | task 5 | spec round cost  = draft 1107787 us/40, verify 4661445 us/35, plain 526332 us/5, process 158433 us, save 0 us, restore 0 us\r",
+        "1.35.659.992 I slot print_timing: id  0 | task 48 | draft acceptance = 0.75000 (   84 accepted /   112 generated), mean len =  3.15\r",
+        "1.35.659.993 I slot print_timing: id  0 | task 48 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 84 accepted)\r",
+        "1.35.659.997 I slot print_timing: id  0 | task 48 | spec round cost  = draft 1239158 us/42, verify 5308561 us/39, plain 371650 us/4, process 173855 us, save 0 us, restore 0 us\r",
+        "1.44.592.691 I slot print_timing: id  0 | task 95 | draft acceptance = 0.94565 (   87 accepted /    92 generated), mean len =  3.49\r",
+        "1.44.592.693 I slot print_timing: id  0 | task 95 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 87 accepted)\r",
+        "1.44.592.698 I slot print_timing: id  0 | task 95 | spec round cost  = draft 1085452 us/40, verify 4618524 us/35, plain 457040 us/5, process 90121 us, save 0 us, restore 0 us\r",
+        "1.57.295.086 I slot print_timing: id  0 | task 138 | draft acceptance = 0.75000 (   84 accepted /   112 generated), mean len =  3.15\r",
+        "1.57.295.086 I slot print_timing: id  0 | task 138 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 84 accepted)\r",
+        "1.57.295.088 I slot print_timing: id  0 | task 138 | spec round cost  = draft 1238982 us/42, verify 5215611 us/39, plain 366128 us/4, process 161781 us, save 0 us, restore 0 us\r",
+        "2.04.885.149 I slot print_timing: id  0 | task 185 | draft acceptance = 0.94565 (   87 accepted /    92 generated), mean len =  3.49\r",
+        "2.04.885.154 I slot print_timing: id  0 | task 185 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 87 accepted)\r",
+        "2.04.885.160 I slot print_timing: id  0 | task 185 | spec round cost  = draft 1111534 us/40, verify 4636051 us/35, plain 463271 us/5, process 164894 us, save 0 us, restore 0 us\r",
+        "2.17.328.592 I slot print_timing: id  0 | task 228 | draft acceptance = 0.75000 (   84 accepted /   112 generated), mean len =  3.15\r",
+        "2.17.328.595 I slot print_timing: id  0 | task 228 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 84 accepted)\r",
+        "2.17.328.598 I slot print_timing: id  0 | task 228 | spec round cost  = draft 1254647 us/42, verify 5247408 us/39, plain 376452 us/4, process 179045 us, save 0 us, restore 0 us\r",
+        "2.25.478.122 I slot print_timing: id  0 | task 275 | draft acceptance = 0.82524 (   85 accepted /   103 generated), mean len =  3.18\r",
+        "2.25.478.123 I slot print_timing: id  0 | task 275 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 85 accepted)\r",
+        "2.25.478.126 I slot print_timing: id  0 | task 275 | spec round cost  = draft 1221891 us/42, verify 5155892 us/39, plain 279153 us/3, process 169648 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-09T19:17:32.4337695Z"
+    },
+    {
+      "arm": "DD-B1",
+      "args": [
+        "-m",
+        "C:\\ArifiLabs\\models\\hf\\huihui-ai\\Huihui-Qwen3.8-27B-abliterated-UD-GGUF\\Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf",
+        "-dev",
+        "Vulkan0",
+        "-ngl",
+        "999",
+        "-fa",
+        "on",
+        "-c",
+        "8192",
+        "-b",
+        "1024",
+        "-ub",
+        "512",
+        "-t",
+        "16",
+        "-tb",
+        "32",
+        "-ctk",
+        "q8_0",
+        "-ctv",
+        "q8_0",
+        "--parallel",
+        "1",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "--spec-type",
+        "draft-dflash",
+        "-md",
+        "C:\\ArifiLabs\\models\\hf\\incoai\\Qwen3.8-27B-DFlash2-GGUF-r0829\\Qwen3.8-27B-DFlash2-Q4_K_M.gguf",
+        "--dflash-defer-injection",
+        "0",
+        "--spec-draft-n-max",
+        "6"
+      ],
+      "env": {
+        "LLAMA_ARIFI_KV_ZERO_PROBE": "1",
+        "GGML_VK_MEMSET_BATCH_LOG": "1"
+      },
+      "cap_bytes": 0,
+      "nonpaged_before": 2597404672.0,
+      "started_utc": "2026-10-09T19:18:04.9399055Z",
+      "healthy": true,
+      "peak_ws_bytes": 1990635520,
+      "peak_private_bytes": 24979419136,
+      "min_avail_bytes": 12923121664,
+      "avail_before_bytes": 14047760384,
+      "requests": [
+        {
+          "tag": "kvzp-10091505-DD-B1-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=4.41 ttft_ms=2764.8 gen_n=8 decode_tps=1.31 draft=5/7"
+        },
+        {
+          "tag": "kvzp-10091505-DD-B1-k1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=15.59 ttft_ms=799.7 gen_n=128 decode_tps=13.3 draft=101/152"
+        },
+        {
+          "tag": "kvzp-10091505-DD-B1-k1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=93.14 ttft_ms=6461.1 gen_n=128 decode_tps=10.98 draft=96/175"
+        },
+        {
+          "tag": "kvzp-10091505-DD-B1-k2-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=17.57 ttft_ms=741.1 gen_n=128 decode_tps=13.38 draft=101/152"
+        },
+        {
+          "tag": "kvzp-10091505-DD-B1-k2-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=104.81 ttft_ms=5814.4 gen_n=128 decode_tps=11.84 draft=96/175"
+        },
+        {
+          "tag": "kvzp-10091505-DD-B1-k3-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=17.52 ttft_ms=726.9 gen_n=128 decode_tps=13.74 draft=101/152"
+        },
+        {
+          "tag": "kvzp-10091505-DD-B1-k3-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=105.6 ttft_ms=5784.7 gen_n=128 decode_tps=11.58 draft=96/175"
+        },
+        {
+          "tag": "kvzp-10091505-DD-B1-k4-short",
+          "exit": 0,
+          "summary": "path=completion regime=sampled prompt_n=12 prefill_tps=17.38 ttft_ms=736.0 gen_n=128 decode_tps=7.55 draft=94/197"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 27920,
+      "load_s": 13.6,
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.00.197.815 I srv  server_prefl: preselected DFlash2 shared driver (block_size=8, draft-max=6)\r",
+        "0.00.204.060 I srv  server_prepa: [spec] auto-selected Vulkan0 as the primary draft device\r",
+        "0.01.925.589 E llama_init_from_model: failed to initialize the context: dflash requires ctx_other to be set (this warning is normal during memory fitting)\r",
+        "0.01.979.452 W operator(): failed to measure the memory of the extra model, fitting without it: failed to create llama_context from model\r",
+        "0.11.638.024 I common_speculative_init_result: loading draft model 'C:\\ArifiLabs\\models\\hf\\incoai\\Qwen3.8-27B-DFlash2-GGUF-r0829\\Qwen3.8-27B-DFlash2-Q4_K_M.gguf'\r",
+        "0.12.526.183 I common_speculative_impl_draft_dflash: adding speculative implementation 'draft-dflash'\r",
+        "0.12.526.200 I common_speculative_impl_draft_dflash: - n_max=6, n_min=0, p_min=0.00\r",
+        "0.12.526.201 I common_speculative_impl_draft_dflash: - block_size=13, mask_token_id=248070, n_extract=5, sample_from_anchor=true\r",
+        "0.12.526.538 I common_speculative_impl_draft_dflash: DFlash2 depth mode: requested depth\r",
+        "0.12.526.542 I common_speculative_impl_draft_dflash: DFlash KV injection: legacy (encode + decode, default)\r",
+        "0.12.526.945 I common_speculative_impl_draft_dflash: DFlash2 draft attention: non-causal\r",
+        "0.22.054.645 I slot print_timing: id  0 | task 0 | draft acceptance = 0.71429 (    5 accepted /     7 generated), mean len =  3.50\r",
+        "0.22.054.646 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 5 accepted)\r",
+        "0.22.054.648 I slot print_timing: id  0 | task 0 | spec round cost  = draft 1690597 us/2, verify 3630714 us/2, plain 0 us/0, process 8368 us, save 0 us, restore 0 us\r",
+        "0.34.241.548 I slot print_timing: id  0 | task 5 | draft acceptance = 0.66447 (  101 accepted /   152 generated), mean len =  4.88\r",
+        "0.34.241.549 I slot print_timing: id  0 | task 5 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 101 accepted)\r",
+        "0.34.241.551 I slot print_timing: id  0 | task 5 | spec round cost  = draft 984387 us/26, verify 8404614 us/26, plain 0 us/0, process 124074 us, save 0 us, restore 0 us\r",
+        "0.53.999.486 I slot print_timing: id  0 | task 34 | draft acceptance = 0.54857 (   96 accepted /   175 generated), mean len =  4.20\r",
+        "0.53.999.488 I slot print_timing: id  0 | task 34 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 96 accepted)\r",
+        "0.53.999.493 I slot print_timing: id  0 | task 34 | spec round cost  = draft 1245199 us/30, verify 9442799 us/30, plain 635509 us/1, process 186439 us, save 0 us, restore 0 us\r",
+        "1.06.389.956 I slot print_timing: id  0 | task 69 | draft acceptance = 0.66447 (  101 accepted /   152 generated), mean len =  4.88\r",
+        "1.06.389.957 I slot print_timing: id  0 | task 69 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 101 accepted)\r",
+        "1.06.389.959 I slot print_timing: id  0 | task 69 | spec round cost  = draft 983907 us/26, verify 8343471 us/26, plain 0 us/0, process 118807 us, save 0 us, restore 0 us\r",
+        "1.24.779.503 I slot print_timing: id  0 | task 98 | draft acceptance = 0.54857 (   96 accepted /   175 generated), mean len =  4.20\r",
+        "1.24.779.504 I slot print_timing: id  0 | task 98 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 96 accepted)\r",
+        "1.24.779.506 I slot print_timing: id  0 | task 98 | spec round cost  = draft 1223164 us/30, verify 9092631 us/30, plain 223225 us/1, process 150925 us, save 0 us, restore 0 us\r",
+        "1.36.317.109 I slot print_timing: id  0 | task 133 | draft acceptance = 0.66447 (  101 accepted /   152 generated), mean len =  4.88\r",
+        "1.36.317.110 I slot print_timing: id  0 | task 133 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 101 accepted)\r",
+        "1.36.317.113 I slot print_timing: id  0 | task 133 | spec round cost  = draft 979041 us/26, verify 8094913 us/26, plain 0 us/0, process 132189 us, save 0 us, restore 0 us\r",
+        "1.55.200.287 I slot print_timing: id  0 | task 162 | draft acceptance = 0.54857 (   96 accepted /   175 generated), mean len =  4.20\r",
+        "1.55.200.288 I slot print_timing: id  0 | task 162 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 96 accepted)\r",
+        "1.55.200.290 I slot print_timing: id  0 | task 162 | spec round cost  = draft 1148574 us/30, verify 9398187 us/30, plain 229134 us/1, process 153971 us, save 0 us, restore 0 us\r",
+        "2.14.107.260 I slot print_timing: id  0 | task 197 | draft acceptance = 0.47716 (   94 accepted /   197 generated), mean len =  3.85\r",
+        "2.14.107.261 I slot print_timing: id  0 | task 197 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 94 accepted)\r",
+        "2.14.107.262 I slot print_timing: id  0 | task 197 | spec round cost  = draft 2946995 us/33, verify 13499686 us/33, plain 0 us/0, process 268951 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-09T19:20:22.7472389Z"
+    },
+    {
+      "arm": "DD-P",
+      "args": [
+        "-m",
+        "C:\\ArifiLabs\\models\\hf\\huihui-ai\\Huihui-Qwen3.8-27B-abliterated-UD-GGUF\\Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf",
+        "-dev",
+        "Vulkan0",
+        "-ngl",
+        "999",
+        "-fa",
+        "on",
+        "-c",
+        "8192",
+        "-b",
+        "1024",
+        "-ub",
+        "512",
+        "-t",
+        "16",
+        "-tb",
+        "32",
+        "-ctk",
+        "q8_0",
+        "-ctv",
+        "q8_0",
+        "--parallel",
+        "1",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "--spec-type",
+        "draft-dflash",
+        "-md",
+        "C:\\ArifiLabs\\models\\hf\\incoai\\Qwen3.8-27B-DFlash2-GGUF-r0829\\Qwen3.8-27B-DFlash2-Q4_K_M.gguf",
+        "--dflash-defer-injection",
+        "0",
+        "--spec-draft-n-max",
+        "6"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 2443014144.0,
+      "started_utc": "2026-10-09T19:20:55.2878789Z",
+      "healthy": true,
+      "peak_ws_bytes": 1918103552,
+      "peak_private_bytes": 24915447808,
+      "min_avail_bytes": 12584009728,
+      "avail_before_bytes": 15147417600,
+      "requests": [
+        {
+          "tag": "kvzp-10091505-DD-P-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=10.75 ttft_ms=1168.1 gen_n=8 decode_tps=6.27 draft=5/7"
+        },
+        {
+          "tag": "kvzp-10091505-DD-P-k1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=15.18 ttft_ms=810.2 gen_n=128 decode_tps=12.72 draft=101/152"
+        },
+        {
+          "tag": "kvzp-10091505-DD-P-k1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=92.5 ttft_ms=6491.5 gen_n=128 decode_tps=10.3 draft=96/175"
+        },
+        {
+          "tag": "kvzp-10091505-DD-P-k2-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=14.9 ttft_ms=850.4 gen_n=128 decode_tps=13.13 draft=101/152"
+        },
+        {
+          "tag": "kvzp-10091505-DD-P-k2-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=103.05 ttft_ms=5930.6 gen_n=128 decode_tps=10.86 draft=96/175"
+        },
+        {
+          "tag": "kvzp-10091505-DD-P-k3-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=16.58 ttft_ms=772.9 gen_n=128 decode_tps=13.57 draft=101/152"
+        },
+        {
+          "tag": "kvzp-10091505-DD-P-k3-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=101.76 ttft_ms=5989.1 gen_n=128 decode_tps=11.43 draft=96/175"
+        },
+        {
+          "tag": "kvzp-10091505-DD-P-k4-short",
+          "exit": 0,
+          "summary": "path=completion regime=sampled prompt_n=12 prefill_tps=16.6 ttft_ms=766.3 gen_n=128 decode_tps=9.45 draft=94/197"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 30388,
+      "load_s": 13.2,
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.00.379.998 I srv  server_prefl: preselected DFlash2 shared driver (block_size=8, draft-max=6)\r",
+        "0.00.386.284 I srv  server_prepa: [spec] auto-selected Vulkan0 as the primary draft device\r",
+        "0.02.302.359 E llama_init_from_model: failed to initialize the context: dflash requires ctx_other to be set (this warning is normal during memory fitting)\r",
+        "0.02.367.670 W operator(): failed to measure the memory of the extra model, fitting without it: failed to create llama_context from model\r",
+        "0.11.102.595 I common_speculative_init_result: loading draft model 'C:\\ArifiLabs\\models\\hf\\incoai\\Qwen3.8-27B-DFlash2-GGUF-r0829\\Qwen3.8-27B-DFlash2-Q4_K_M.gguf'\r",
+        "0.12.022.356 I common_speculative_impl_draft_dflash: adding speculative implementation 'draft-dflash'\r",
+        "0.12.022.366 I common_speculative_impl_draft_dflash: - n_max=6, n_min=0, p_min=0.00\r",
+        "0.12.022.367 I common_speculative_impl_draft_dflash: - block_size=13, mask_token_id=248070, n_extract=5, sample_from_anchor=true\r",
+        "0.12.022.369 I common_speculative_impl_draft_dflash: DFlash2 depth mode: requested depth\r",
+        "0.12.022.374 I common_speculative_impl_draft_dflash: DFlash KV injection: legacy (encode + decode, default)\r",
+        "0.12.024.735 I common_speculative_impl_draft_dflash: DFlash2 draft attention: non-causal\r",
+        "0.15.520.726 I slot print_timing: id  0 | task 0 | draft acceptance = 0.71429 (    5 accepted /     7 generated), mean len =  3.50\r",
+        "0.15.520.727 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 5 accepted)\r",
+        "0.15.520.729 I slot print_timing: id  0 | task 0 | spec round cost  = draft 275450 us/2, verify 829080 us/2, plain 0 us/0, process 9176 us, save 0 us, restore 0 us\r",
+        "0.27.917.548 I slot print_timing: id  0 | task 5 | draft acceptance = 0.66447 (  101 accepted /   152 generated), mean len =  4.88\r",
+        "0.27.917.549 I slot print_timing: id  0 | task 5 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 101 accepted)\r",
+        "0.27.917.551 I slot print_timing: id  0 | task 5 | spec round cost  = draft 1096007 us/26, verify 8704314 us/26, plain 0 us/0, process 124917 us, save 0 us, restore 0 us\r",
+        "0.48.109.426 I slot print_timing: id  0 | task 34 | draft acceptance = 0.54857 (   96 accepted /   175 generated), mean len =  4.20\r",
+        "0.48.109.427 I slot print_timing: id  0 | task 34 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 96 accepted)\r",
+        "0.48.109.429 I slot print_timing: id  0 | task 34 | spec round cost  = draft 1376120 us/30, verify 10379613 us/30, plain 332540 us/1, process 170872 us, save 0 us, restore 0 us\r",
+        "0.59.988.945 I slot print_timing: id  0 | task 69 | draft acceptance = 0.66447 (  101 accepted /   152 generated), mean len =  4.88\r",
+        "0.59.988.946 I slot print_timing: id  0 | task 69 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 101 accepted)\r",
+        "0.59.988.948 I slot print_timing: id  0 | task 69 | spec round cost  = draft 1048531 us/26, verify 8453214 us/26, plain 0 us/0, process 125894 us, save 0 us, restore 0 us\r",
+        "1.19.154.217 I slot print_timing: id  0 | task 98 | draft acceptance = 0.54857 (   96 accepted /   175 generated), mean len =  4.20\r",
+        "1.19.154.219 I slot print_timing: id  0 | task 98 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 96 accepted)\r",
+        "1.19.154.221 I slot print_timing: id  0 | task 98 | spec round cost  = draft 1215818 us/30, verify 10035906 us/30, plain 235832 us/1, process 150110 us, save 0 us, restore 0 us\r",
+        "1.29.834.477 I slot print_timing: id  0 | task 133 | draft acceptance = 0.66447 (  101 accepted /   152 generated), mean len =  4.88\r",
+        "1.29.834.478 I slot print_timing: id  0 | task 133 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 101 accepted)\r",
+        "1.29.834.480 I slot print_timing: id  0 | task 133 | spec round cost  = draft 976300 us/26, verify 8220664 us/26, plain 0 us/0, process 117345 us, save 0 us, restore 0 us\r",
+        "1.48.917.362 I slot print_timing: id  0 | task 162 | draft acceptance = 0.54857 (   96 accepted /   175 generated), mean len =  4.20\r",
+        "1.48.917.363 I slot print_timing: id  0 | task 162 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 96 accepted)\r",
+        "1.48.917.366 I slot print_timing: id  0 | task 162 | spec round cost  = draft 1209386 us/30, verify 9491265 us/30, plain 228910 us/1, process 139506 us, save 0 us, restore 0 us\r",
+        "2.04.157.624 I slot print_timing: id  0 | task 197 | draft acceptance = 0.47716 (   94 accepted /   197 generated), mean len =  3.85\r",
+        "2.04.157.625 I slot print_timing: id  0 | task 197 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 94 accepted)\r",
+        "2.04.157.626 I slot print_timing: id  0 | task 197 | spec round cost  = draft 1415272 us/33, verify 11756272 us/33, plain 0 us/0, process 192506 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-09T19:23:04.7189564Z"
+    },
+    {
+      "arm": "NF-B1",
+      "args": [
+        "-m",
+        "C:\\ArifiLabs\\models\\hf\\huihui-ai\\Huihui-Qwen3.8-27B-abliterated-UD-GGUF\\Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf",
+        "-dev",
+        "Vulkan0",
+        "-ngl",
+        "999",
+        "-fa",
+        "off",
+        "-c",
+        "8192",
+        "-b",
+        "1024",
+        "-ub",
+        "512",
+        "-t",
+        "16",
+        "-tb",
+        "32",
+        "--parallel",
+        "1",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1"
+      ],
+      "env": {
+        "LLAMA_ARIFI_KV_ZERO_PROBE": "1",
+        "GGML_VK_MEMSET_BATCH_LOG": "1"
+      },
+      "cap_bytes": 0,
+      "nonpaged_before": 2386898944.0,
+      "started_utc": "2026-10-09T19:23:37.1974546Z",
+      "healthy": true,
+      "peak_ws_bytes": 1039613952,
+      "peak_private_bytes": 20738940928,
+      "min_avail_bytes": 13641625600,
+      "avail_before_bytes": 14767616000,
+      "requests": [
+        {
+          "tag": "kvzp-10091505-NF-B1-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=15.66 ttft_ms=826.7 gen_n=8 decode_tps=4.13 draft=None/None"
+        },
+        {
+          "tag": "kvzp-10091505-NF-B1-k1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=18.72 ttft_ms=660.8 gen_n=128 decode_tps=4.6 draft=None/None"
+        },
+        {
+          "tag": "kvzp-10091505-NF-B1-k1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=101.79 ttft_ms=6843.4 gen_n=128 decode_tps=4.56 draft=None/None"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 27916,
+      "load_s": 11.6,
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.14.388.378 I slot print_timing: id  0 | task 0 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 1690409 us/7, process 0 us, save 0 us, restore 0 us\r",
+        "0.44.026.531 I slot print_timing: id  0 | task 10 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 27549934 us/127, process 0 us, save 0 us, restore 0 us\r",
+        "1.20.668.029 I slot print_timing: id  0 | task 140 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 27771195 us/127, process 0 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-09T19:25:02.6061652Z"
+    }
+  ],
+  "kvzb": {
+    "head": "89a019138071a6ef50fb2305fca5fffa1fce16fb",
+    "build": "89a019138071a6ef50fb2305fca5fffa1fce16fb"
+  },
+  "point": {
+    "head": "ed590650bdd3e93cdffce81d5fcff9ee19cf4b64",
+    "build": "a14473f76813a2a4b975de2a6da5b80536540b09"
+  },
+  "slots": [
+    {
+      "tag": "QM-B1",
+      "srv": "C:\\ArifiLabs\\cache\\mtp-x1-lane\\build-kvzb\\bin\\llama-server.exe",
+      "env": {
+        "LLAMA_ARIFI_KV_ZERO_PROBE": "1",
+        "GGML_VK_MEMSET_BATCH_LOG": "1"
+      },
+      "result": "ok",
+      "load_s": 78.5,
+      "min_avail_bytes": 12652015616
+    },
+    {
+      "tag": "QM-B0",
+      "srv": "C:\\ArifiLabs\\cache\\mtp-x1-lane\\build-kvzb\\bin\\llama-server.exe",
+      "env": {
+        "LLAMA_ARIFI_KV_ZERO_PROBE": "1",
+        "GGML_VK_MEMSET_BATCH": "0",
+        "GGML_VK_MEMSET_BATCH_LOG": "1"
+      },
+      "result": "ok",
+      "load_s": 73.3,
+      "min_avail_bytes": 12759719936
+    },
+    {
+      "tag": "QM-Z0",
+      "srv": "C:\\ArifiLabs\\cache\\mtp-x1-lane\\build-kvzb\\bin\\llama-server.exe",
+      "env": {
+        "LLAMA_ARIFI_KV_ZERO_FREED": "0",
+        "LLAMA_ARIFI_KV_ZERO_PROBE": "1",
+        "GGML_VK_MEMSET_BATCH_LOG": "1"
+      },
+      "result": "ok",
+      "load_s": 74.4,
+      "min_avail_bytes": 11386306560
+    },
+    {
+      "tag": "QM-P",
+      "srv": "C:\\ArifiLabs\\cache\\mtp-x1-lane\\build-point\\bin\\llama-server.exe",
+      "env": {},
+      "result": "ok",
+      "load_s": 73.8,
+      "min_avail_bytes": 12207083520
+    },
+    {
+      "tag": "DD-B1",
+      "srv": "C:\\ArifiLabs\\cache\\mtp-x1-lane\\build-kvzb\\bin\\llama-server.exe",
+      "env": {
+        "LLAMA_ARIFI_KV_ZERO_PROBE": "1",
+        "GGML_VK_MEMSET_BATCH_LOG": "1"
+      },
+      "result": "ok",
+      "load_s": 13.6,
+      "min_avail_bytes": 12923121664
+    },
+    {
+      "tag": "DD-P",
+      "srv": "C:\\ArifiLabs\\cache\\mtp-x1-lane\\build-point\\bin\\llama-server.exe",
+      "env": {},
+      "result": "ok",
+      "load_s": 13.2,
+      "min_avail_bytes": 12584009728
+    },
+    {
+      "tag": "NF-B1",
+      "srv": "C:\\ArifiLabs\\cache\\mtp-x1-lane\\build-kvzb\\bin\\llama-server.exe",
+      "env": {
+        "LLAMA_ARIFI_KV_ZERO_PROBE": "1",
+        "GGML_VK_MEMSET_BATCH_LOG": "1"
+      },
+      "result": "ok",
+      "load_s": 11.6,
+      "min_avail_bytes": 13641625600
+    }
+  ],
+  "prompts": {
+    "short": "C:\\ArifiLabs\\cache\\strata-x1\\prompt-hq76.tokens",
+    "long": "C:\\ArifiLabs\\cache\\strata-x1\\prompt-long.tokens"
+  },
+  "trim_ws": "trimmed 251 processes; available MB 12221 -> 15504",
+  "start_QM-B1": {
+    "committed_GB": 19.38,
+    "waited_s": 32.0,
+    "avail_GB": 14.98
+  },
+  "start_QM-B0": {
+    "committed_GB": 18.19,
+    "waited_s": 31.0,
+    "avail_GB": 14.6
+  },
+  "start_QM-Z0": {
+    "committed_GB": 19.6,
+    "waited_s": 32.0,
+    "avail_GB": 13.69
+  },
+  "start_QM-P": {
+    "committed_GB": 18.84,
+    "waited_s": 31.0,
+    "avail_GB": 13.85
+  },
+  "start_DD-B1": {
+    "committed_GB": 18.32,
+    "waited_s": 31.0,
+    "avail_GB": 14.05
+  },
+  "start_DD-P": {
+    "committed_GB": 18.45,
+    "waited_s": 32.0,
+    "avail_GB": 15.23
+  },
+  "start_NF-B1": {
+    "committed_GB": 18.04,
+    "waited_s": 31.0,
+    "avail_GB": 14.78
+  },
+  "finished_utc": "2026-10-09T19:25:02.6110382Z"
+}

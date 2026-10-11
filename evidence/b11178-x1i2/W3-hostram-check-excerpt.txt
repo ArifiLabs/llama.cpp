@@ -1,0 +1,4 @@
+Verbatim lines 2, 4 of the measuring lane's verdict file (other lines are process notes).
+
+Memory CHECKED (memory-summary.json, llama-server, lane sweep.py incl. 512, order P1 N1 N2 P2): server peak working set OLD 8.57 / 8.73 GB (both runs stopped by the sweep's 2 GiB available-RAM alarm at the 512 step) vs FIXED 1.51 / 1.46 GB (both completed, 512 at 98.7 / 98.5 t/s).
+Correctness CHECKED: test-save-load-state snapshot GREEN rc 0, planted RED rc 1 with "byte equality failed first_diff=12" (logs/snapshot-*-hq74). Served greedy outputs identical OLD vs FIXED (restore/results.json) - but that run never hit the prompt cache (cache_n 0), so server-level restore is covered only by the unit test.

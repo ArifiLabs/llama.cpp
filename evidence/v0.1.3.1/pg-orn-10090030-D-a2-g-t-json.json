@@ -1,0 +1,32 @@
+{
+ "prompt_file": "C:\\ArifiLabs\\cache\\mtp-x1-lane\\cells\\pgc-json.txt",
+ "path": "chat",
+ "regime": "greedy",
+ "sampling": {
+  "temperature": 0.0,
+  "top_k": 1
+ },
+ "ttft_ms": 511.4,
+ "wall_s": 14.5,
+ "timings": {
+  "cache_n": 0,
+  "prompt_n": 87,
+  "prompt_ms": 456.259,
+  "prompt_per_token_ms": 5.2443563218390805,
+  "prompt_per_second": 190.68117012486329,
+  "predicted_n": 489,
+  "predicted_ms": 13991.836,
+  "predicted_per_token_ms": 28.67179508196721,
+  "predicted_per_second": 34.877481411302995,
+  "draft_n": 370,
+  "draft_n_accepted": 305
+ },
+ "tokens": null,
+ "content": "```json\n{\n  \"employees\": [\n    {\n      \"id\": 1001,\n      \"name\": \"Margaret Chen\",\n      \"title\": \"VP of Engineering\",\n      \"department\": \"Engineering\",\n      \"start_date\": \"2016-03-14\",\n      \"skills\": [\"System Architecture\", \"Team Leadership\", \"Cloud Infrastructure\", \"Strategic Planning\"],\n      \"manager_id\": null\n    },\n    {\n      \"id\": 1047,\n      \"name\": \"David Okonkwo\",\n      \"title\": \"Senior Backend Engineer\",\n      \"department\": \"Engineering\",\n      \"start_date\": \"2019-07-22\",\n      \"skills\": [\"Python\", \"Go\", \"PostgreSQL\", \"Kubernetes\", \"API Design\"],\n      \"manager_id\": 1001\n    },\n    {\n      \"id\": 1088,\n      \"name\": \"Priya Nair\",\n      \"title\": \"Product Manager\",\n      \"department\": \"Product\",\n      \"start_date\": \"2021-01-05\",\n      \"skills\": [\"Product Strategy\", \"Roadmap Planning\", \"User Research\", \"Agile\"],\n      \"manager_id\": 1001\n    }\n  ]\n}\n```",
+ "draft_n": 370,
+ "draft_n_accepted": 305,
+ "reasoning_content": "The user wants me to return three employee records from an HR export as one JSON object matching a specific schema. Let me create three realistic employee records.\n\nThe schema is:\n```json\n{\n  \"employees\": [\n    {\n      \"id\": int,\n      \"name\": str,\n      \"title\": str,\n      \"department\": str,\n      \"start_date\": \"YYYY-MM-DD\",\n      \"skills\": [str],\n      \"manager_id\": int or null\n    }\n  ]\n}\n```\n\nLet me create three employees. I'll make them realistic with proper relationships (manager_id referencing other employees).\n\nLet me create:\n1. A CEO or VP with no manager (null)\n2. A manager with a manager_id\n3. An employee with a manager_id\n\nLet me make the relationships consistent.\n",
+ "text_all": "The user wants me to return three employee records from an HR export as one JSON object matching a specific schema. Let me create three realistic employee records.\n\nThe schema is:\n```json\n{\n  \"employees\": [\n    {\n      \"id\": int,\n      \"name\": str,\n      \"title\": str,\n      \"department\": str,\n      \"start_date\": \"YYYY-MM-DD\",\n      \"skills\": [str],\n      \"manager_id\": int or null\n    }\n  ]\n}\n```\n\nLet me create three employees. I'll make them realistic with proper relationships (manager_id referencing other employees).\n\nLet me create:\n1. A CEO or VP with no manager (null)\n2. A manager with a manager_id\n3. An employee with a manager_id\n\nLet me make the relationships consistent.\n\u001e```json\n{\n  \"employees\": [\n    {\n      \"id\": 1001,\n      \"name\": \"Margaret Chen\",\n      \"title\": \"VP of Engineering\",\n      \"department\": \"Engineering\",\n      \"start_date\": \"2016-03-14\",\n      \"skills\": [\"System Architecture\", \"Team Leadership\", \"Cloud Infrastructure\", \"Strategic Planning\"],\n      \"manager_id\": null\n    },\n    {\n      \"id\": 1047,\n      \"name\": \"David Okonkwo\",\n      \"title\": \"Senior Backend Engineer\",\n      \"department\": \"Engineering\",\n      \"start_date\": \"2019-07-22\",\n      \"skills\": [\"Python\", \"Go\", \"PostgreSQL\", \"Kubernetes\", \"API Design\"],\n      \"manager_id\": 1001\n    },\n    {\n      \"id\": 1088,\n      \"name\": \"Priya Nair\",\n      \"title\": \"Product Manager\",\n      \"department\": \"Product\",\n      \"start_date\": \"2021-01-05\",\n      \"skills\": [\"Product Strategy\", \"Roadmap Planning\", \"User Research\", \"Agile\"],\n      \"manager_id\": 1001\n    }\n  ]\n}\n```",
+ "finish_reason": "stop",
+ "answer_reached": true
+}

@@ -1,0 +1,964 @@
+{
+  "run_id": "c31-10091916",
+  "state": "c31-complete",
+  "pid": 24148,
+  "started_utc": "2026-10-09T23:16:49.6959948Z",
+  "arms": [
+    {
+      "arm": "fx1",
+      "bin": "C:\\ArifiLabs\\cache\\qsa-x1-lane\\bin-fx",
+      "source": "lane-301/fa-sparse-idx d579bb51f6 (c31 build fx)",
+      "args": [
+        "-m",
+        "D:\\ArifiLabs\\models\\hf\\ISTA-DASLab\\Qwen3.8-Flash-Next-GSQ-RCO-GGUF\\IQ3_S\\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
+        "-ngl",
+        "999",
+        "-np",
+        "1",
+        "-fa",
+        "on",
+        "--port",
+        "8301",
+        "--host",
+        "127.0.0.1",
+        "--lazy-mode",
+        "on",
+        "-c",
+        "33792",
+        "-lm",
+        "dio",
+        "-ub",
+        "4096",
+        "-b",
+        "4096"
+      ],
+      "env": {},
+      "started_utc": "2026-10-09T23:28:22.3263273Z",
+      "healthy": true,
+      "peak_ws_bytes": 1544175616,
+      "min_avail_bytes": 7684530176,
+      "requests": [
+        {
+          "tag": "c31-10091916-fx1-warmup-2k",
+          "exit": 0,
+          "summary": "prompt_n=2000 prefill_tps=154.94 prompt_ms=12908.4 ttft_ms=12927.2 gen_n=4 decode_tps=2.82 draft=None/None"
+        },
+        {
+          "tag": "c31-10091916-fx1-r1-2k",
+          "exit": 0,
+          "summary": "prompt_n=2000 prefill_tps=220.6 prompt_ms=9066.1 ttft_ms=9088.4 gen_n=128 decode_tps=11.33 draft=None/None"
+        },
+        {
+          "tag": "c31-10091916-fx1-r1-8k",
+          "exit": 0,
+          "summary": "prompt_n=8192 prefill_tps=217.87 prompt_ms=37599.6 ttft_ms=37621.4 gen_n=128 decode_tps=11.52 draft=None/None"
+        },
+        {
+          "tag": "c31-10091916-fx1-r1-16k",
+          "exit": 0,
+          "summary": "prompt_n=16384 prefill_tps=206.51 prompt_ms=79338.9 ttft_ms=79380.2 gen_n=128 decode_tps=11.51 draft=None/None"
+        }
+      ],
+      "pid": 26596,
+      "load_s": 18.9,
+      "result": "ok",
+      "exit_code": -1,
+      "finished_utc": "2026-10-09T23:31:45.9082036Z"
+    },
+    {
+      "arm": "pt1",
+      "bin": "C:\\ArifiLabs\\cache\\qsa-x1-lane\\bin-point",
+      "source": "v0.1.3.1 comparator: copy of cache/mtp-x1-lane/build-point/bin/llama-server.exe built from a14473f768 (point4; engine code == ed590650bd, diff tests/patches/tools only); --version stamp 8374737a29; sha256 dd74d1dc573a06fda27dedc5a2d414229c022e23f8f44c6db69d87ebfc9d0295 (source dd74d1dc573a06fda27dedc5a2d414229c022e23f8f44c6db69d87ebfc9d0295); copied 2026-10-09T11:06:43Z",
+      "args": [
+        "-m",
+        "D:\\ArifiLabs\\models\\hf\\ISTA-DASLab\\Qwen3.8-Flash-Next-GSQ-RCO-GGUF\\IQ3_S\\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
+        "-ngl",
+        "999",
+        "-np",
+        "1",
+        "-fa",
+        "on",
+        "--port",
+        "8301",
+        "--host",
+        "127.0.0.1",
+        "--lazy-mode",
+        "on",
+        "-c",
+        "33792",
+        "-lm",
+        "dio",
+        "-ub",
+        "4096",
+        "-b",
+        "4096"
+      ],
+      "env": {},
+      "started_utc": "2026-10-09T23:31:56.1151821Z",
+      "healthy": true,
+      "peak_ws_bytes": 1607864320,
+      "min_avail_bytes": 7946711040,
+      "requests": [
+        {
+          "tag": "c31-10091916-pt1-warmup-2k",
+          "exit": 0,
+          "summary": "prompt_n=2000 prefill_tps=204.82 prompt_ms=9764.7 ttft_ms=9790.4 gen_n=4 decode_tps=8.43 draft=None/None"
+        },
+        {
+          "tag": "c31-10091916-pt1-r1-2k",
+          "exit": 0,
+          "summary": "prompt_n=2000 prefill_tps=219.92 prompt_ms=9094.2 ttft_ms=9115.4 gen_n=128 decode_tps=11.31 draft=None/None"
+        },
+        {
+          "tag": "c31-10091916-pt1-r1-8k",
+          "exit": 0,
+          "summary": "prompt_n=8192 prefill_tps=214.43 prompt_ms=38202.8 ttft_ms=38224.2 gen_n=128 decode_tps=11.5 draft=None/None"
+        },
+        {
+          "tag": "c31-10091916-pt1-r1-16k",
+          "exit": 0,
+          "summary": "prompt_n=16384 prefill_tps=202.67 prompt_ms=80839.1 ttft_ms=80861.3 gen_n=128 decode_tps=11.33 draft=None/None"
+        }
+      ],
+      "pid": 25764,
+      "load_s": 15.7,
+      "result": "ok",
+      "exit_code": -1,
+      "finished_utc": "2026-10-09T23:35:12.5101433Z"
+    },
+    {
+      "arm": "pt2",
+      "bin": "C:\\ArifiLabs\\cache\\qsa-x1-lane\\bin-point",
+      "source": "v0.1.3.1 comparator: copy of cache/mtp-x1-lane/build-point/bin/llama-server.exe built from a14473f768 (point4; engine code == ed590650bd, diff tests/patches/tools only); --version stamp 8374737a29; sha256 dd74d1dc573a06fda27dedc5a2d414229c022e23f8f44c6db69d87ebfc9d0295 (source dd74d1dc573a06fda27dedc5a2d414229c022e23f8f44c6db69d87ebfc9d0295); copied 2026-10-09T11:06:43Z",
+      "args": [
+        "-m",
+        "D:\\ArifiLabs\\models\\hf\\ISTA-DASLab\\Qwen3.8-Flash-Next-GSQ-RCO-GGUF\\IQ3_S\\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
+        "-ngl",
+        "999",
+        "-np",
+        "1",
+        "-fa",
+        "on",
+        "--port",
+        "8301",
+        "--host",
+        "127.0.0.1",
+        "--lazy-mode",
+        "on",
+        "-c",
+        "33792",
+        "-lm",
+        "dio",
+        "-ub",
+        "4096",
+        "-b",
+        "4096"
+      ],
+      "env": {},
+      "started_utc": "2026-10-09T23:35:22.7029687Z",
+      "healthy": true,
+      "peak_ws_bytes": 1607675904,
+      "min_avail_bytes": 8645140480,
+      "requests": [
+        {
+          "tag": "c31-10091916-pt2-warmup-2k",
+          "exit": 0,
+          "summary": "prompt_n=2000 prefill_tps=203.24 prompt_ms=9840.7 ttft_ms=9864.1 gen_n=4 decode_tps=8.34 draft=None/None"
+        },
+        {
+          "tag": "c31-10091916-pt2-r2-2k",
+          "exit": 0,
+          "summary": "prompt_n=2000 prefill_tps=219.93 prompt_ms=9093.8 ttft_ms=9128.2 gen_n=128 decode_tps=11.33 draft=None/None"
+        },
+        {
+          "tag": "c31-10091916-pt2-r2-8k",
+          "exit": 0,
+          "summary": "prompt_n=8192 prefill_tps=213.41 prompt_ms=38385.3 ttft_ms=38406.3 gen_n=128 decode_tps=11.53 draft=None/None"
+        },
+        {
+          "tag": "c31-10091916-pt2-r2-16k",
+          "exit": 0,
+          "summary": "prompt_n=16384 prefill_tps=203.14 prompt_ms=80653.3 ttft_ms=80675.3 gen_n=128 decode_tps=11.42 draft=None/None"
+        }
+      ],
+      "pid": 27468,
+      "load_s": 15.7,
+      "result": "ok",
+      "exit_code": -1,
+      "finished_utc": "2026-10-09T23:38:39.0130806Z"
+    },
+    {
+      "arm": "fx2",
+      "bin": "C:\\ArifiLabs\\cache\\qsa-x1-lane\\bin-fx",
+      "source": "lane-301/fa-sparse-idx d579bb51f6 (c31 build fx)",
+      "args": [
+        "-m",
+        "D:\\ArifiLabs\\models\\hf\\ISTA-DASLab\\Qwen3.8-Flash-Next-GSQ-RCO-GGUF\\IQ3_S\\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
+        "-ngl",
+        "999",
+        "-np",
+        "1",
+        "-fa",
+        "on",
+        "--port",
+        "8301",
+        "--host",
+        "127.0.0.1",
+        "--lazy-mode",
+        "on",
+        "-c",
+        "33792",
+        "-lm",
+        "dio",
+        "-ub",
+        "4096",
+        "-b",
+        "4096"
+      ],
+      "env": {},
+      "started_utc": "2026-10-09T23:38:49.2260872Z",
+      "healthy": true,
+      "peak_ws_bytes": 1608597504,
+      "min_avail_bytes": 8616542208,
+      "requests": [
+        {
+          "tag": "c31-10091916-fx2-warmup-2k",
+          "exit": 0,
+          "summary": "prompt_n=2000 prefill_tps=204.44 prompt_ms=9783.0 ttft_ms=9804.9 gen_n=4 decode_tps=8.22 draft=None/None"
+        },
+        {
+          "tag": "c31-10091916-fx2-r2-2k",
+          "exit": 0,
+          "summary": "prompt_n=2000 prefill_tps=216.26 prompt_ms=9248.1 ttft_ms=9267.9 gen_n=128 decode_tps=11.26 draft=None/None"
+        },
+        {
+          "tag": "c31-10091916-fx2-r2-8k",
+          "exit": 0,
+          "summary": "prompt_n=8192 prefill_tps=216.79 prompt_ms=37788.6 ttft_ms=37826.2 gen_n=128 decode_tps=11.58 draft=None/None"
+        },
+        {
+          "tag": "c31-10091916-fx2-r2-16k",
+          "exit": 0,
+          "summary": "prompt_n=16384 prefill_tps=207.06 prompt_ms=79128.2 ttft_ms=79169.0 gen_n=128 decode_tps=11.41 draft=None/None"
+        }
+      ],
+      "pid": 17140,
+      "load_s": 14.7,
+      "result": "ok",
+      "exit_code": -1,
+      "finished_utc": "2026-10-09T23:42:02.5349786Z"
+    },
+    {
+      "arm": "fx32k1",
+      "bin": "C:\\ArifiLabs\\cache\\qsa-x1-lane\\bin-fx",
+      "source": "lane-301/fa-sparse-idx d579bb51f6 (c31 build fx)",
+      "args": [
+        "-m",
+        "D:\\ArifiLabs\\models\\hf\\ISTA-DASLab\\Qwen3.8-Flash-Next-GSQ-RCO-GGUF\\IQ3_S\\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
+        "-ngl",
+        "999",
+        "-np",
+        "1",
+        "-fa",
+        "on",
+        "--port",
+        "8301",
+        "--host",
+        "127.0.0.1",
+        "--lazy-mode",
+        "on",
+        "-c",
+        "33792",
+        "-lm",
+        "dio",
+        "-ub",
+        "4096",
+        "-b",
+        "4096"
+      ],
+      "env": {},
+      "started_utc": "2026-10-09T23:42:42.7396338Z",
+      "healthy": true,
+      "peak_ws_bytes": 1608282112,
+      "min_avail_bytes": 8660856832,
+      "requests": [
+        {
+          "tag": "c31-10091916-fx32k1-warmup-2k",
+          "exit": 0,
+          "summary": "prompt_n=2000 prefill_tps=202.11 prompt_ms=9895.6 ttft_ms=9920.5 gen_n=4 decode_tps=8.33 draft=None/None"
+        },
+        {
+          "tag": "c31-10091916-fx32k1-r32k1-32k",
+          "exit": 0,
+          "summary": "prompt_n=32768 prefill_tps=196.79 prompt_ms=166509.2 ttft_ms=166567.1 gen_n=128 decode_tps=11.2 draft=None/None"
+        }
+      ],
+      "pid": 10544,
+      "load_s": 15.7,
+      "result": "ok",
+      "exit_code": -1,
+      "finished_utc": "2026-10-09T23:46:13.0470854Z"
+    },
+    {
+      "arm": "pt32k1",
+      "bin": "C:\\ArifiLabs\\cache\\qsa-x1-lane\\bin-point",
+      "source": "v0.1.3.1 comparator: copy of cache/mtp-x1-lane/build-point/bin/llama-server.exe built from a14473f768 (point4; engine code == ed590650bd, diff tests/patches/tools only); --version stamp 8374737a29; sha256 dd74d1dc573a06fda27dedc5a2d414229c022e23f8f44c6db69d87ebfc9d0295 (source dd74d1dc573a06fda27dedc5a2d414229c022e23f8f44c6db69d87ebfc9d0295); copied 2026-10-09T11:06:43Z",
+      "args": [
+        "-m",
+        "D:\\ArifiLabs\\models\\hf\\ISTA-DASLab\\Qwen3.8-Flash-Next-GSQ-RCO-GGUF\\IQ3_S\\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
+        "-ngl",
+        "999",
+        "-np",
+        "1",
+        "-fa",
+        "on",
+        "--port",
+        "8301",
+        "--host",
+        "127.0.0.1",
+        "--lazy-mode",
+        "on",
+        "-c",
+        "33792",
+        "-lm",
+        "dio",
+        "-ub",
+        "4096",
+        "-b",
+        "4096"
+      ],
+      "env": {},
+      "started_utc": "2026-10-09T23:46:23.2279651Z",
+      "healthy": true,
+      "peak_ws_bytes": 1605193728,
+      "min_avail_bytes": 8655978496,
+      "requests": [
+        {
+          "tag": "c31-10091916-pt32k1-warmup-2k",
+          "exit": 0,
+          "summary": "prompt_n=2000 prefill_tps=201.12 prompt_ms=9944.4 ttft_ms=9983.2 gen_n=4 decode_tps=8.32 draft=None/None"
+        },
+        {
+          "tag": "c31-10091916-pt32k1-r32k1-32k",
+          "exit": 0,
+          "summary": "prompt_n=32768 prefill_tps=192.63 prompt_ms=170107.0 ttft_ms=170172.9 gen_n=128 decode_tps=11.21 draft=None/None"
+        }
+      ],
+      "pid": 26940,
+      "load_s": 14.7,
+      "result": "ok",
+      "exit_code": -1,
+      "finished_utc": "2026-10-09T23:49:56.7299147Z"
+    },
+    {
+      "arm": "pt32k2",
+      "bin": "C:\\ArifiLabs\\cache\\qsa-x1-lane\\bin-point",
+      "source": "v0.1.3.1 comparator: copy of cache/mtp-x1-lane/build-point/bin/llama-server.exe built from a14473f768 (point4; engine code == ed590650bd, diff tests/patches/tools only); --version stamp 8374737a29; sha256 dd74d1dc573a06fda27dedc5a2d414229c022e23f8f44c6db69d87ebfc9d0295 (source dd74d1dc573a06fda27dedc5a2d414229c022e23f8f44c6db69d87ebfc9d0295); copied 2026-10-09T11:06:43Z",
+      "args": [
+        "-m",
+        "D:\\ArifiLabs\\models\\hf\\ISTA-DASLab\\Qwen3.8-Flash-Next-GSQ-RCO-GGUF\\IQ3_S\\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
+        "-ngl",
+        "999",
+        "-np",
+        "1",
+        "-fa",
+        "on",
+        "--port",
+        "8301",
+        "--host",
+        "127.0.0.1",
+        "--lazy-mode",
+        "on",
+        "-c",
+        "33792",
+        "-lm",
+        "dio",
+        "-ub",
+        "4096",
+        "-b",
+        "4096"
+      ],
+      "env": {},
+      "started_utc": "2026-10-09T23:50:06.9255511Z",
+      "healthy": true,
+      "peak_ws_bytes": 1607688192,
+      "min_avail_bytes": 8639004672,
+      "requests": [
+        {
+          "tag": "c31-10091916-pt32k2-warmup-2k",
+          "exit": 0,
+          "summary": "prompt_n=2000 prefill_tps=200.43 prompt_ms=9978.8 ttft_ms=9999.4 gen_n=4 decode_tps=8.22 draft=None/None"
+        },
+        {
+          "tag": "c31-10091916-pt32k2-r32k2-32k",
+          "exit": 0,
+          "summary": "prompt_n=32768 prefill_tps=192.4 prompt_ms=170314.2 ttft_ms=170377.5 gen_n=128 decode_tps=11.16 draft=None/None"
+        }
+      ],
+      "pid": 19352,
+      "load_s": 15.7,
+      "result": "ok",
+      "exit_code": -1,
+      "finished_utc": "2026-10-09T23:53:41.3629674Z"
+    },
+    {
+      "arm": "fx32k2",
+      "bin": "C:\\ArifiLabs\\cache\\qsa-x1-lane\\bin-fx",
+      "source": "lane-301/fa-sparse-idx d579bb51f6 (c31 build fx)",
+      "args": [
+        "-m",
+        "D:\\ArifiLabs\\models\\hf\\ISTA-DASLab\\Qwen3.8-Flash-Next-GSQ-RCO-GGUF\\IQ3_S\\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
+        "-ngl",
+        "999",
+        "-np",
+        "1",
+        "-fa",
+        "on",
+        "--port",
+        "8301",
+        "--host",
+        "127.0.0.1",
+        "--lazy-mode",
+        "on",
+        "-c",
+        "33792",
+        "-lm",
+        "dio",
+        "-ub",
+        "4096",
+        "-b",
+        "4096"
+      ],
+      "env": {},
+      "started_utc": "2026-10-09T23:53:51.5617330Z",
+      "healthy": true,
+      "peak_ws_bytes": 1603919872,
+      "min_avail_bytes": 8637874176,
+      "requests": [
+        {
+          "tag": "c31-10091916-fx32k2-warmup-2k",
+          "exit": 0,
+          "summary": "prompt_n=2000 prefill_tps=200.99 prompt_ms=9950.6 ttft_ms=9979.0 gen_n=4 decode_tps=8.38 draft=None/None"
+        },
+        {
+          "tag": "c31-10091916-fx32k2-r32k2-32k",
+          "exit": 0,
+          "summary": "prompt_n=32768 prefill_tps=196.03 prompt_ms=167156.1 ttft_ms=167199.7 gen_n=128 decode_tps=11.12 draft=None/None"
+        }
+      ],
+      "pid": 25288,
+      "load_s": 14.7,
+      "result": "ok",
+      "exit_code": -1,
+      "finished_utc": "2026-10-09T23:57:20.9794181Z"
+    }
+  ],
+  "ops": [
+    {
+      "name": "ops-fa-b",
+      "bin": "C:\\ArifiLabs\\cache\\qsa-x1-lane\\bin-b31",
+      "args": [
+        "-o",
+        "FLASH_ATTN_EXT",
+        "-b",
+        "Vulkan0",
+        "-p",
+        "n_kv_max=[1-9]"
+      ],
+      "exit": 0,
+      "fail_lines": 0,
+      "ok_lines": 21,
+      "perf": [],
+      "summary": "21/21 tests passed | 2/2 backends passed"
+    },
+    {
+      "name": "ops-fa-fx",
+      "bin": "C:\\ArifiLabs\\cache\\qsa-x1-lane\\bin-fx",
+      "args": [
+        "-o",
+        "FLASH_ATTN_EXT",
+        "-b",
+        "Vulkan0",
+        "-p",
+        "n_kv_max=[1-9]"
+      ],
+      "exit": 0,
+      "fail_lines": 0,
+      "ok_lines": 21,
+      "perf": [],
+      "summary": "21/21 tests passed | 2/2 backends passed"
+    },
+    {
+      "name": "ops-qm-b",
+      "bin": "C:\\ArifiLabs\\cache\\qsa-x1-lane\\bin-b31",
+      "args": [
+        "-o",
+        "QSA_MASK_FA",
+        "-b",
+        "Vulkan0"
+      ],
+      "exit": 0,
+      "fail_lines": 0,
+      "ok_lines": 7,
+      "perf": [],
+      "summary": "7/7 tests passed | 2/2 backends passed"
+    },
+    {
+      "name": "ops-qm-fx",
+      "bin": "C:\\ArifiLabs\\cache\\qsa-x1-lane\\bin-fx",
+      "args": [
+        "-o",
+        "QSA_MASK_FA",
+        "-b",
+        "Vulkan0"
+      ],
+      "exit": 0,
+      "fail_lines": 0,
+      "ok_lines": 7,
+      "perf": [],
+      "summary": "7/7 tests passed | 2/2 backends passed"
+    },
+    {
+      "name": "ops-fa-red",
+      "bin": "C:\\ArifiLabs\\cache\\qsa-x1-lane\\bin-fxred",
+      "args": [
+        "-o",
+        "FLASH_ATTN_EXT",
+        "-b",
+        "Vulkan0",
+        "-p",
+        "n_kv_max=[1-9]"
+      ],
+      "exit": 1,
+      "fail_lines": 9,
+      "ok_lines": 12,
+      "perf": [],
+      "summary": "12/21 tests passed | 1/2 backends passed"
+    },
+    {
+      "name": "ops-qm-red",
+      "bin": "C:\\ArifiLabs\\cache\\qsa-x1-lane\\bin-fxred",
+      "args": [
+        "-o",
+        "QSA_MASK_FA",
+        "-b",
+        "Vulkan0"
+      ],
+      "exit": 1,
+      "fail_lines": 5,
+      "ok_lines": 2,
+      "perf": [],
+      "summary": "2/7 tests passed | 1/2 backends passed"
+    },
+    {
+      "name": "perf-fa-b1",
+      "bin": "C:\\ArifiLabs\\cache\\qsa-x1-lane\\bin-b31",
+      "args": [
+        "perf",
+        "-o",
+        "FLASH_ATTN_EXT",
+        "-b",
+        "Vulkan0",
+        "-p",
+        "n_kv_max=2048"
+      ],
+      "exit": 0,
+      "fail_lines": 0,
+      "ok_lines": 0,
+      "perf": [
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=4096,nb=1,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):              8946 runs -   116.19 us/run - 100.66 MFLOP/run - 866.40 GFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=16384,nb=1,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):                     8217 runs -   124.36 us/run - 402.65 MFLOP/run -   3.24 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=32768,nb=1,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):                     7125 runs -   140.79 us/run - 805.31 MFLOP/run -   5.72 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=8192,nb=9,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):               896 runs -  1116.76 us/run -   1.81 GFLOP/run -   1.62 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=8192,nb=64,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):                      232 runs -  4396.01 us/run -  12.88 GFLOP/run -   2.93 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=8192,nb=512,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):                      27 runs - 37210.93 us/run - 103.08 GFLOP/run -   2.77 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=32768,nb=9,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):                      812 runs -  1241.27 us/run -   7.25 GFLOP/run -   5.84 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=32768,nb=64,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):                     202 runs -  4957.50 us/run -  51.54 GFLOP/run -  10.40 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=32768,nb=512,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):                     26 runs - 40007.88 us/run - 412.32 GFLOP/run -  10.31 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=512,hsv=512,nh=1,nr23=[8,1],kv=49152,nb=1,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):              4125 runs -   249.09 us/run - 805.31 MFLOP/run -   3.23 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=512,hsv=512,nh=2,nr23=[8,1],kv=49152,nb=1,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):              2709 runs -   373.34 us/run -   1.61 GFLOP/run -   4.31 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=576,hsv=512,nh=1,nr23=[16,1],kv=49152,nb=1,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=1,n_kv_max=2048):                      826 runs -  1255.23 us/run -   1.71 GFLOP/run -   1.36 TFLOPS"
+      ],
+      "summary": "2/2 backends passed"
+    },
+    {
+      "name": "perf-qm-b1",
+      "bin": "C:\\ArifiLabs\\cache\\qsa-x1-lane\\bin-b31",
+      "args": [
+        "perf",
+        "-o",
+        "QSA_MASK_FA",
+        "-b",
+        "Vulkan0"
+      ],
+      "exit": 0,
+      "fail_lines": 0,
+      "ok_lines": 0,
+      "perf": [
+        "QSA_MASK_FA(kv=8192,nb=1,n_stream=1,width=2051):              8172 runs -   130.44 us/run -    24640 kB/run -  180.15 GB/s",
+        "QSA_MASK_FA(kv=32768,nb=1,n_stream=1,width=2051):                     6820 runs -   153.10 us/run -    98416 kB/run -  613.05 GB/s",
+        "QSA_MASK_FA(kv=32768,nb=64,n_stream=1,width=2051):                     319 runs -  4673.85 us/run -   105472 kB/run -   21.54 GB/s"
+      ],
+      "summary": "2/2 backends passed"
+    },
+    {
+      "name": "perf-fa-fx1",
+      "bin": "C:\\ArifiLabs\\cache\\qsa-x1-lane\\bin-fx",
+      "args": [
+        "perf",
+        "-o",
+        "FLASH_ATTN_EXT",
+        "-b",
+        "Vulkan0",
+        "-p",
+        "n_kv_max=2048"
+      ],
+      "exit": 0,
+      "fail_lines": 0,
+      "ok_lines": 0,
+      "perf": [
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=4096,nb=1,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):              9940 runs -   102.17 us/run - 100.66 MFLOP/run - 985.25 GFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=16384,nb=1,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):                     8715 runs -   116.29 us/run - 402.65 MFLOP/run -   3.46 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=32768,nb=1,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):                     7500 runs -   133.85 us/run - 805.31 MFLOP/run -   6.02 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=8192,nb=9,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):              1064 runs -   942.94 us/run -   1.81 GFLOP/run -   1.92 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=8192,nb=64,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):                      288 runs -  3554.90 us/run -  12.88 GFLOP/run -   3.62 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=8192,nb=512,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):                      36 runs - 27780.78 us/run - 103.08 GFLOP/run -   3.71 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=32768,nb=9,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):                      924 runs -  1091.16 us/run -   7.25 GFLOP/run -   6.64 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=32768,nb=64,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):                     234 runs -  4304.96 us/run -  51.54 GFLOP/run -  11.97 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=32768,nb=512,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):                     30 runs - 33770.37 us/run - 412.32 GFLOP/run -  12.21 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=512,hsv=512,nh=1,nr23=[8,1],kv=49152,nb=1,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):              4125 runs -   248.19 us/run - 805.31 MFLOP/run -   3.24 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=512,hsv=512,nh=2,nr23=[8,1],kv=49152,nb=1,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):              2709 runs -   374.76 us/run -   1.61 GFLOP/run -   4.30 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=576,hsv=512,nh=1,nr23=[16,1],kv=49152,nb=1,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=1,n_kv_max=2048):                      826 runs -  1254.87 us/run -   1.71 GFLOP/run -   1.36 TFLOPS"
+      ],
+      "summary": "2/2 backends passed"
+    },
+    {
+      "name": "perf-qm-fx1",
+      "bin": "C:\\ArifiLabs\\cache\\qsa-x1-lane\\bin-fx",
+      "args": [
+        "perf",
+        "-o",
+        "QSA_MASK_FA",
+        "-b",
+        "Vulkan0"
+      ],
+      "exit": 0,
+      "fail_lines": 0,
+      "ok_lines": 0,
+      "perf": [
+        "QSA_MASK_FA(kv=8192,nb=1,n_stream=1,width=2051):              9534 runs -   117.62 us/run -    24640 kB/run -  199.78 GB/s",
+        "QSA_MASK_FA(kv=32768,nb=1,n_stream=1,width=2051):                     7502 runs -   139.37 us/run -    98416 kB/run -  673.46 GB/s",
+        "QSA_MASK_FA(kv=32768,nb=64,n_stream=1,width=2051):                     319 runs -  3843.68 us/run -   105472 kB/run -   26.19 GB/s"
+      ],
+      "summary": "2/2 backends passed"
+    },
+    {
+      "name": "perf-fa-fx2",
+      "bin": "C:\\ArifiLabs\\cache\\qsa-x1-lane\\bin-fx",
+      "args": [
+        "perf",
+        "-o",
+        "FLASH_ATTN_EXT",
+        "-b",
+        "Vulkan0",
+        "-p",
+        "n_kv_max=2048"
+      ],
+      "exit": 0,
+      "fail_lines": 0,
+      "ok_lines": 0,
+      "perf": [
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=4096,nb=1,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):              9940 runs -   102.29 us/run - 100.66 MFLOP/run - 984.05 GFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=16384,nb=1,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):                     8715 runs -   116.12 us/run - 402.65 MFLOP/run -   3.47 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=32768,nb=1,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):                     7500 runs -   134.28 us/run - 805.31 MFLOP/run -   6.00 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=8192,nb=9,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):              1120 runs -   937.06 us/run -   1.81 GFLOP/run -   1.93 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=8192,nb=64,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):                      288 runs -  3568.31 us/run -  12.88 GFLOP/run -   3.61 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=8192,nb=512,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):                      37 runs - 27748.05 us/run - 103.08 GFLOP/run -   3.71 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=32768,nb=9,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):                      924 runs -  1089.75 us/run -   7.25 GFLOP/run -   6.65 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=32768,nb=64,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):                     230 runs -  4377.45 us/run -  51.54 GFLOP/run -  11.77 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=32768,nb=512,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):                     30 runs - 34012.43 us/run - 412.32 GFLOP/run -  12.12 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=512,hsv=512,nh=1,nr23=[8,1],kv=49152,nb=1,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):              4125 runs -   249.63 us/run - 805.31 MFLOP/run -   3.23 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=512,hsv=512,nh=2,nr23=[8,1],kv=49152,nb=1,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):              2709 runs -   374.52 us/run -   1.61 GFLOP/run -   4.30 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=576,hsv=512,nh=1,nr23=[16,1],kv=49152,nb=1,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=1,n_kv_max=2048):                      826 runs -  1254.63 us/run -   1.71 GFLOP/run -   1.36 TFLOPS"
+      ],
+      "summary": "2/2 backends passed"
+    },
+    {
+      "name": "perf-qm-fx2",
+      "bin": "C:\\ArifiLabs\\cache\\qsa-x1-lane\\bin-fx",
+      "args": [
+        "perf",
+        "-o",
+        "QSA_MASK_FA",
+        "-b",
+        "Vulkan0"
+      ],
+      "exit": 0,
+      "fail_lines": 0,
+      "ok_lines": 0,
+      "perf": [
+        "QSA_MASK_FA(kv=8192,nb=1,n_stream=1,width=2051):              9534 runs -   117.36 us/run -    24640 kB/run -  200.23 GB/s",
+        "QSA_MASK_FA(kv=32768,nb=1,n_stream=1,width=2051):                     7161 runs -   140.03 us/run -    98416 kB/run -  670.27 GB/s",
+        "QSA_MASK_FA(kv=32768,nb=64,n_stream=1,width=2051):                     319 runs -  4188.43 us/run -   105472 kB/run -   24.04 GB/s"
+      ],
+      "summary": "2/2 backends passed"
+    },
+    {
+      "name": "perf-fa-b2",
+      "bin": "C:\\ArifiLabs\\cache\\qsa-x1-lane\\bin-b31",
+      "args": [
+        "perf",
+        "-o",
+        "FLASH_ATTN_EXT",
+        "-b",
+        "Vulkan0",
+        "-p",
+        "n_kv_max=2048"
+      ],
+      "exit": 0,
+      "fail_lines": 0,
+      "ok_lines": 0,
+      "perf": [
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=4096,nb=1,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):              9940 runs -   108.47 us/run - 100.66 MFLOP/run - 928.00 GFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=16384,nb=1,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):                     8217 runs -   122.45 us/run - 402.65 MFLOP/run -   3.29 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=32768,nb=1,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):                     7125 runs -   140.38 us/run - 805.31 MFLOP/run -   5.74 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=8192,nb=9,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):               896 runs -  1150.87 us/run -   1.81 GFLOP/run -   1.57 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=8192,nb=64,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):                      232 runs -  4365.27 us/run -  12.88 GFLOP/run -   2.95 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=8192,nb=512,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):                      30 runs - 33967.47 us/run - 103.08 GFLOP/run -   3.03 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=32768,nb=9,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):                      798 runs -  1253.18 us/run -   7.25 GFLOP/run -   5.78 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=32768,nb=64,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):                     206 runs -  4869.51 us/run -  51.54 GFLOP/run -  10.58 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=32768,nb=512,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):                     26 runs - 39653.50 us/run - 412.32 GFLOP/run -  10.40 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=512,hsv=512,nh=1,nr23=[8,1],kv=49152,nb=1,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):              4125 runs -   248.84 us/run - 805.31 MFLOP/run -   3.24 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=512,hsv=512,nh=2,nr23=[8,1],kv=49152,nb=1,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048):              2709 runs -   373.46 us/run -   1.61 GFLOP/run -   4.31 TFLOPS",
+        "FLASH_ATTN_EXT(hsk=576,hsv=512,nh=1,nr23=[16,1],kv=49152,nb=1,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=1,n_kv_max=2048):                      826 runs -  1249.12 us/run -   1.71 GFLOP/run -   1.37 TFLOPS"
+      ],
+      "summary": "2/2 backends passed"
+    },
+    {
+      "name": "perf-qm-b2",
+      "bin": "C:\\ArifiLabs\\cache\\qsa-x1-lane\\bin-b31",
+      "args": [
+        "perf",
+        "-o",
+        "QSA_MASK_FA",
+        "-b",
+        "Vulkan0"
+      ],
+      "exit": 0,
+      "fail_lines": 0,
+      "ok_lines": 0,
+      "perf": [
+        "QSA_MASK_FA(kv=8192,nb=1,n_stream=1,width=2051):              8172 runs -   130.19 us/run -    24640 kB/run -  180.49 GB/s",
+        "QSA_MASK_FA(kv=32768,nb=1,n_stream=1,width=2051):                     6820 runs -   152.42 us/run -    98416 kB/run -  615.80 GB/s",
+        "QSA_MASK_FA(kv=32768,nb=64,n_stream=1,width=2051):                     319 runs -  4667.82 us/run -   105472 kB/run -   21.57 GB/s"
+      ],
+      "summary": "2/2 backends passed"
+    }
+  ],
+  "builds": [
+    {
+      "tag": "b31",
+      "src": "ed590650bd (v0.1.3.1 engine code)",
+      "rc": 0
+    },
+    {
+      "tag": "fx",
+      "src": "lane-301/fa-sparse-idx d579bb51f6",
+      "rc": 0
+    },
+    {
+      "tag": "fxred",
+      "src": "d579bb51f6 + RED (K prefetch loads slice d, not d+1)",
+      "rc": 0
+    }
+  ],
+  "source": "d579bb51f65f48842ef200adac04306648965049 dirty=0",
+  "perf": [
+    {
+      "case": "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=32768,nb=1,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048)",
+      "base": [
+        140.79,
+        140.38
+      ],
+      "fx": [
+        133.85,
+        134.28
+      ],
+      "ratio": 0.9536
+    },
+    {
+      "case": "QSA_MASK_FA(kv=32768,nb=64,n_stream=1,width=2051)",
+      "base": [
+        4673.85,
+        4667.82
+      ],
+      "fx": [
+        3843.68,
+        4188.43
+      ],
+      "ratio": 0.8598
+    },
+    {
+      "case": "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=32768,nb=64,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048)",
+      "base": [
+        4957.5,
+        4869.51
+      ],
+      "fx": [
+        4304.96,
+        4377.45
+      ],
+      "ratio": 0.8835
+    },
+    {
+      "case": "QSA_MASK_FA(kv=8192,nb=1,n_stream=1,width=2051)",
+      "base": [
+        130.44,
+        130.19
+      ],
+      "fx": [
+        117.62,
+        117.36
+      ],
+      "ratio": 0.9016
+    },
+    {
+      "case": "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=32768,nb=9,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048)",
+      "base": [
+        1241.27,
+        1253.18
+      ],
+      "fx": [
+        1091.16,
+        1089.75
+      ],
+      "ratio": 0.8743
+    },
+    {
+      "case": "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=8192,nb=512,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048)",
+      "base": [
+        37210.93,
+        33967.47
+      ],
+      "fx": [
+        27780.78,
+        27748.05
+      ],
+      "ratio": 0.7801
+    },
+    {
+      "case": "FLASH_ATTN_EXT(hsk=576,hsv=512,nh=1,nr23=[16,1],kv=49152,nb=1,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=1,n_kv_max=2048)",
+      "base": [
+        1255.23,
+        1249.12
+      ],
+      "fx": [
+        1254.87,
+        1254.63
+      ],
+      "ratio": 1.0021
+    },
+    {
+      "case": "QSA_MASK_FA(kv=32768,nb=1,n_stream=1,width=2051)",
+      "base": [
+        153.1,
+        152.42
+      ],
+      "fx": [
+        139.37,
+        140.03
+      ],
+      "ratio": 0.9145
+    },
+    {
+      "case": "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=16384,nb=1,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048)",
+      "base": [
+        124.36,
+        122.45
+      ],
+      "fx": [
+        116.29,
+        116.12
+      ],
+      "ratio": 0.9417
+    },
+    {
+      "case": "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=8192,nb=64,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048)",
+      "base": [
+        4396.01,
+        4365.27
+      ],
+      "fx": [
+        3554.9,
+        3568.31
+      ],
+      "ratio": 0.813
+    },
+    {
+      "case": "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=4096,nb=1,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048)",
+      "base": [
+        116.19,
+        108.47
+      ],
+      "fx": [
+        102.17,
+        102.29
+      ],
+      "ratio": 0.9101
+    },
+    {
+      "case": "FLASH_ATTN_EXT(hsk=512,hsv=512,nh=2,nr23=[8,1],kv=49152,nb=1,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048)",
+      "base": [
+        373.34,
+        373.46
+      ],
+      "fx": [
+        374.76,
+        374.52
+      ],
+      "ratio": 1.0033
+    },
+    {
+      "case": "FLASH_ATTN_EXT(hsk=512,hsv=512,nh=1,nr23=[8,1],kv=49152,nb=1,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048)",
+      "base": [
+        249.09,
+        248.84
+      ],
+      "fx": [
+        248.19,
+        249.63
+      ],
+      "ratio": 0.9998
+    },
+    {
+      "case": "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=8192,nb=9,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048)",
+      "base": [
+        1116.76,
+        1150.87
+      ],
+      "fx": [
+        942.94,
+        937.06
+      ],
+      "ratio": 0.8291
+    },
+    {
+      "case": "FLASH_ATTN_EXT(hsk=256,hsv=256,nh=2,nr23=[12,1],kv=32768,nb=512,mask=1,sinks=0,max_bias=0.000000,logit_softcap=0.000000,prec=f32,type_K=f16,type_V=f16,permute=[0,1,2,3],kv_view=1,v_is_view_of_k=0,n_kv_max=2048)",
+      "base": [
+        40007.88,
+        39653.5
+      ],
+      "fx": [
+        33770.37,
+        34012.43
+      ],
+      "ratio": 0.8509
+    }
+  ],
+  "gate": {
+    "key_ratio": 0.8598152150525549,
+    "key_rank_clean": true,
+    "worst_ratio": 1.0033
+  },
+  "finished_utc": "2026-10-09T23:57:21.0238876Z"
+}

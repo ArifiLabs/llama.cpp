@@ -1,0 +1,2210 @@
+{
+  "run_id": "pg-orn-10090030",
+  "state": "pointgate-gpu-complete",
+  "pid": 20380,
+  "started_utc": "2026-10-09T04:30:33.3048447Z",
+  "head": "a14473f76813a2a4b975de2a6da5b80536540b09",
+  "arms": [
+    {
+      "arm": "P-a1-g",
+      "args": [
+        "-m",
+        "D:\\ArifiLabs\\models\\hf\\ornith-ai\\Ornith-1.5-35B-A3B-GGUF\\Ornith-1.5-35B-Q4_K_M.gguf",
+        "-ngl",
+        "999",
+        "-np",
+        "1",
+        "-fa",
+        "on",
+        "-c",
+        "4096",
+        "-ub",
+        "512",
+        "-b",
+        "2048",
+        "-lm",
+        "dio",
+        "--lazy-mode",
+        "on",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 3771158528.0,
+      "started_utc": "2026-10-09T04:32:09.5624384Z",
+      "healthy": true,
+      "peak_ws_bytes": 714891264,
+      "peak_private_bytes": 24050749440,
+      "min_avail_bytes": 11553832960,
+      "avail_before_bytes": 12400390144,
+      "requests": [
+        {
+          "tag": "pg-orn-10090030-P-a1-g-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=44.95 ttft_ms=300.8 gen_n=8 decode_tps=19.38 draft=None/None"
+        },
+        {
+          "tag": "pg-orn-10090030-P-a1-g-r1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=57.05 ttft_ms=233.7 gen_n=128 decode_tps=29.44 draft=None/None"
+        },
+        {
+          "tag": "pg-orn-10090030-P-a1-g-r1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=406.56 ttft_ms=1511.9 gen_n=128 decode_tps=28.88 draft=None/None"
+        },
+        {
+          "tag": "pg-orn-10090030-P-a1-g-r2-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=55.96 ttft_ms=261.6 gen_n=128 decode_tps=29.07 draft=None/None"
+        },
+        {
+          "tag": "pg-orn-10090030-P-a1-g-r2-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=440.53 ttft_ms=1424.2 gen_n=128 decode_tps=28.85 draft=None/None"
+        },
+        {
+          "tag": "pg-orn-10090030-P-a1-g-t-chat",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=48 prefill_tps=119.65 ttft_ms=438.0 gen_n=512 decode_tps=29.13 draft=None/None answer=False reasoning_chars=2056 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-P-a1-g-t-code",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=75 prefill_tps=170.11 ttft_ms=485.3 gen_n=512 decode_tps=29.08 draft=None/None answer=False reasoning_chars=1946 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-P-a1-g-t-json",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=87 prefill_tps=188.06 ttft_ms=498.1 gen_n=485 decode_tps=29.0 draft=None/None answer=True reasoning_chars=691 finish=stop"
+        },
+        {
+          "tag": "pg-orn-10090030-P-a1-g-t-reason",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=119 prefill_tps=238.33 ttft_ms=546.6 gen_n=768 decode_tps=29.01 draft=None/None answer=False reasoning_chars=1752 finish=length"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 23308,
+      "load_s": 7.6,
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.08.483.108 I slot print_timing: id  0 | task 0 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 358983 us/7, process 0 us, save 0 us, restore 0 us\r",
+        "0.14.381.655 I slot print_timing: id  0 | task 10 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 4269896 us/127, process 0 us, save 0 us, restore 0 us\r",
+        "0.21.791.451 I slot print_timing: id  0 | task 140 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 4339577 us/127, process 0 us, save 0 us, restore 0 us\r",
+        "0.28.562.951 I slot print_timing: id  0 | task 271 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 4312818 us/127, process 0 us, save 0 us, restore 0 us\r",
+        "0.35.801.235 I slot print_timing: id  0 | task 401 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 4351553 us/127, process 0 us, save 0 us, restore 0 us\r",
+        "0.53.989.401 I slot print_timing: id  0 | task 532 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 17337282 us/511, process 0 us, save 0 us, restore 0 us\r",
+        "1.14.181.073 I slot print_timing: id  0 | task 1046 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 17357824 us/511, process 0 us, save 0 us, restore 0 us\r",
+        "1.33.442.889 I slot print_timing: id  0 | task 1560 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 16477721 us/484, process 0 us, save 0 us, restore 0 us\r",
+        "2.01.319.916 I slot print_timing: id  0 | task 2047 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 26130948 us/767, process 0 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-09T04:34:15.0849524Z"
+    },
+    {
+      "arm": "P-b1-p",
+      "args": [
+        "-m",
+        "D:\\ArifiLabs\\models\\hf\\ornith-ai\\Ornith-1.5-35B-A3B-GGUF\\Ornith-1.5-35B-Q4_K_M.gguf",
+        "-ngl",
+        "999",
+        "-np",
+        "1",
+        "-fa",
+        "on",
+        "-c",
+        "4096",
+        "-ub",
+        "512",
+        "-b",
+        "2048",
+        "-lm",
+        "dio",
+        "--lazy-mode",
+        "on",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 3771723776.0,
+      "started_utc": "2026-10-09T04:34:47.5620526Z",
+      "healthy": true,
+      "peak_ws_bytes": 715100160,
+      "peak_private_bytes": 24051167232,
+      "min_avail_bytes": 11377946624,
+      "avail_before_bytes": 12243570688,
+      "requests": [
+        {
+          "tag": "pg-orn-10090030-P-b1-p-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=45.14 ttft_ms=295.3 gen_n=8 decode_tps=19.01 draft=None/None"
+        },
+        {
+          "tag": "pg-orn-10090030-P-b1-p-r1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=56.86 ttft_ms=245.8 gen_n=128 decode_tps=29.25 draft=None/None"
+        },
+        {
+          "tag": "pg-orn-10090030-P-b1-p-r1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=408.82 ttft_ms=1518.6 gen_n=128 decode_tps=28.78 draft=None/None"
+        },
+        {
+          "tag": "pg-orn-10090030-P-b1-p-r2-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=57.42 ttft_ms=264.0 gen_n=128 decode_tps=29.13 draft=None/None"
+        },
+        {
+          "tag": "pg-orn-10090030-P-b1-p-r2-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=431.17 ttft_ms=1441.4 gen_n=128 decode_tps=28.74 draft=None/None"
+        },
+        {
+          "tag": "pg-orn-10090030-P-b1-p-t-chat",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=48 prefill_tps=118.31 ttft_ms=449.6 gen_n=512 decode_tps=29.05 draft=None/None answer=False reasoning_chars=2056 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-P-b1-p-t-code",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=75 prefill_tps=164.75 ttft_ms=505.5 gen_n=512 decode_tps=29.06 draft=None/None answer=False reasoning_chars=1946 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-P-b1-p-t-json",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=87 prefill_tps=183.15 ttft_ms=517.7 gen_n=485 decode_tps=28.98 draft=None/None answer=True reasoning_chars=691 finish=stop"
+        },
+        {
+          "tag": "pg-orn-10090030-P-b1-p-t-reason",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=119 prefill_tps=242.52 ttft_ms=549.2 gen_n=768 decode_tps=28.93 draft=None/None answer=False reasoning_chars=1752 finish=length"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 25200,
+      "load_s": 7.6,
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.08.392.508 I slot print_timing: id  0 | task 0 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 365025 us/7, process 0 us, save 0 us, restore 0 us\r",
+        "0.14.335.427 I slot print_timing: id  0 | task 10 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 4291124 us/127, process 0 us, save 0 us, restore 0 us\r",
+        "0.21.717.208 I slot print_timing: id  0 | task 140 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 4361141 us/127, process 0 us, save 0 us, restore 0 us\r",
+        "0.28.474.429 I slot print_timing: id  0 | task 271 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 4306774 us/127, process 0 us, save 0 us, restore 0 us\r",
+        "0.35.750.533 I slot print_timing: id  0 | task 401 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 4365089 us/127, process 0 us, save 0 us, restore 0 us\r",
+        "0.56.000.484 I slot print_timing: id  0 | task 532 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 17389363 us/511, process 0 us, save 0 us, restore 0 us\r",
+        "1.16.194.003 I slot print_timing: id  0 | task 1046 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 17385203 us/511, process 0 us, save 0 us, restore 0 us\r",
+        "1.35.485.320 I slot print_timing: id  0 | task 1560 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 16511118 us/484, process 0 us, save 0 us, restore 0 us\r",
+        "2.03.474.321 I slot print_timing: id  0 | task 2047 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 26211808 us/767, process 0 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-09T04:36:55.2124383Z"
+    },
+    {
+      "arm": "P-b2-p",
+      "args": [
+        "-m",
+        "D:\\ArifiLabs\\models\\hf\\ornith-ai\\Ornith-1.5-35B-A3B-GGUF\\Ornith-1.5-35B-Q4_K_M.gguf",
+        "-ngl",
+        "999",
+        "-np",
+        "1",
+        "-fa",
+        "on",
+        "-c",
+        "4096",
+        "-ub",
+        "512",
+        "-b",
+        "2048",
+        "-lm",
+        "dio",
+        "--lazy-mode",
+        "on",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 3772354560.0,
+      "started_utc": "2026-10-09T04:37:27.7269276Z",
+      "healthy": true,
+      "peak_ws_bytes": 714895360,
+      "peak_private_bytes": 24070262784,
+      "min_avail_bytes": 11460825088,
+      "avail_before_bytes": 12336537600,
+      "requests": [
+        {
+          "tag": "pg-orn-10090030-P-b2-p-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=45.2 ttft_ms=293.9 gen_n=8 decode_tps=19.37 draft=None/None"
+        },
+        {
+          "tag": "pg-orn-10090030-P-b2-p-r1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=57.92 ttft_ms=241.9 gen_n=128 decode_tps=29.28 draft=None/None"
+        },
+        {
+          "tag": "pg-orn-10090030-P-b2-p-r1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=406.87 ttft_ms=1509.5 gen_n=128 decode_tps=28.77 draft=None/None"
+        },
+        {
+          "tag": "pg-orn-10090030-P-b2-p-r2-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=57.03 ttft_ms=251.1 gen_n=128 decode_tps=29.04 draft=None/None"
+        },
+        {
+          "tag": "pg-orn-10090030-P-b2-p-r2-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=433.71 ttft_ms=1446.0 gen_n=128 decode_tps=28.84 draft=None/None"
+        },
+        {
+          "tag": "pg-orn-10090030-P-b2-p-t-chat",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=48 prefill_tps=119.16 ttft_ms=448.5 gen_n=512 decode_tps=28.99 draft=None/None answer=False reasoning_chars=2056 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-P-b2-p-t-code",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=75 prefill_tps=158.94 ttft_ms=518.1 gen_n=512 decode_tps=29.09 draft=None/None answer=False reasoning_chars=1946 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-P-b2-p-t-json",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=87 prefill_tps=191.95 ttft_ms=512.8 gen_n=485 decode_tps=29.05 draft=None/None answer=True reasoning_chars=691 finish=stop"
+        },
+        {
+          "tag": "pg-orn-10090030-P-b2-p-t-reason",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=119 prefill_tps=227.2 ttft_ms=586.6 gen_n=768 decode_tps=28.88 draft=None/None answer=False reasoning_chars=1752 finish=length"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 18956,
+      "load_s": 7.6,
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.08.423.515 I slot print_timing: id  0 | task 0 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 359154 us/7, process 0 us, save 0 us, restore 0 us\r",
+        "0.14.372.391 I slot print_timing: id  0 | task 10 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 4286680 us/127, process 0 us, save 0 us, restore 0 us\r",
+        "0.21.774.081 I slot print_timing: id  0 | task 140 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 4363373 us/127, process 0 us, save 0 us, restore 0 us\r",
+        "0.28.515.735 I slot print_timing: id  0 | task 271 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 4315614 us/127, process 0 us, save 0 us, restore 0 us\r",
+        "0.35.785.245 I slot print_timing: id  0 | task 401 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 4349279 us/127, process 0 us, save 0 us, restore 0 us\r",
+        "0.54.070.227 I slot print_timing: id  0 | task 532 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 17412599 us/511, process 0 us, save 0 us, restore 0 us\r",
+        "1.14.170.052 I slot print_timing: id  0 | task 1046 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 17368611 us/511, process 0 us, save 0 us, restore 0 us\r",
+        "1.33.360.071 I slot print_timing: id  0 | task 1560 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 16458513 us/484, process 0 us, save 0 us, restore 0 us\r",
+        "2.01.456.853 I slot print_timing: id  0 | task 2047 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 26233450 us/767, process 0 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-09T04:39:33.2237924Z"
+    },
+    {
+      "arm": "P-a2-g",
+      "args": [
+        "-m",
+        "D:\\ArifiLabs\\models\\hf\\ornith-ai\\Ornith-1.5-35B-A3B-GGUF\\Ornith-1.5-35B-Q4_K_M.gguf",
+        "-ngl",
+        "999",
+        "-np",
+        "1",
+        "-fa",
+        "on",
+        "-c",
+        "4096",
+        "-ub",
+        "512",
+        "-b",
+        "2048",
+        "-lm",
+        "dio",
+        "--lazy-mode",
+        "on",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 3774124032.0,
+      "started_utc": "2026-10-09T04:40:05.6289060Z",
+      "healthy": true,
+      "peak_ws_bytes": 715116544,
+      "peak_private_bytes": 24046985216,
+      "min_avail_bytes": 11428876288,
+      "avail_before_bytes": 12292669440,
+      "requests": [
+        {
+          "tag": "pg-orn-10090030-P-a2-g-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=45.25 ttft_ms=305.1 gen_n=8 decode_tps=19.53 draft=None/None"
+        },
+        {
+          "tag": "pg-orn-10090030-P-a2-g-r1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=56.23 ttft_ms=242.3 gen_n=128 decode_tps=29.4 draft=None/None"
+        },
+        {
+          "tag": "pg-orn-10090030-P-a2-g-r1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=409.12 ttft_ms=1506.8 gen_n=128 decode_tps=28.79 draft=None/None"
+        },
+        {
+          "tag": "pg-orn-10090030-P-a2-g-r2-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=56.06 ttft_ms=250.6 gen_n=128 decode_tps=29.17 draft=None/None"
+        },
+        {
+          "tag": "pg-orn-10090030-P-a2-g-r2-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=436.92 ttft_ms=1435.8 gen_n=128 decode_tps=28.61 draft=None/None"
+        },
+        {
+          "tag": "pg-orn-10090030-P-a2-g-t-chat",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=48 prefill_tps=118.68 ttft_ms=440.6 gen_n=512 decode_tps=29.18 draft=None/None answer=False reasoning_chars=2056 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-P-a2-g-t-code",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=75 prefill_tps=169.78 ttft_ms=479.0 gen_n=512 decode_tps=29.11 draft=None/None answer=False reasoning_chars=1946 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-P-a2-g-t-json",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=87 prefill_tps=188.16 ttft_ms=509.9 gen_n=485 decode_tps=29.04 draft=None/None answer=True reasoning_chars=691 finish=stop"
+        },
+        {
+          "tag": "pg-orn-10090030-P-a2-g-t-reason",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=119 prefill_tps=237.23 ttft_ms=541.2 gen_n=768 decode_tps=28.99 draft=None/None answer=False reasoning_chars=1752 finish=length"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 19104,
+      "load_s": 7.6,
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.08.427.680 I slot print_timing: id  0 | task 0 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 355313 us/7, process 0 us, save 0 us, restore 0 us\r",
+        "0.14.358.169 I slot print_timing: id  0 | task 10 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 4275603 us/127, process 0 us, save 0 us, restore 0 us\r",
+        "0.21.748.793 I slot print_timing: id  0 | task 140 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 4353045 us/127, process 0 us, save 0 us, restore 0 us\r",
+        "0.28.490.945 I slot print_timing: id  0 | task 271 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 4297977 us/127, process 0 us, save 0 us, restore 0 us\r",
+        "0.35.811.140 I slot print_timing: id  0 | task 401 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 4384016 us/127, process 0 us, save 0 us, restore 0 us\r",
+        "0.55.968.868 I slot print_timing: id  0 | task 532 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 17318150 us/511, process 0 us, save 0 us, restore 0 us\r",
+        "1.16.128.810 I slot print_timing: id  0 | task 1046 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 17351466 us/511, process 0 us, save 0 us, restore 0 us\r",
+        "1.35.364.971 I slot print_timing: id  0 | task 1560 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 16476307 us/484, process 0 us, save 0 us, restore 0 us\r",
+        "2.03.338.680 I slot print_timing: id  0 | task 2047 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 26142668 us/767, process 0 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-09T04:42:13.1055663Z"
+    },
+    {
+      "arm": "M-a1-g",
+      "args": [
+        "-m",
+        "D:\\ArifiLabs\\models\\hf\\ornith-ai\\Ornith-1.5-35B-A3B-GGUF\\Ornith-1.5-35B-Q4_K_M.gguf",
+        "-ngl",
+        "999",
+        "-np",
+        "1",
+        "-fa",
+        "on",
+        "-c",
+        "4096",
+        "-ub",
+        "512",
+        "-b",
+        "2048",
+        "-lm",
+        "dio",
+        "--lazy-mode",
+        "on",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "--spec-type",
+        "draft-mtp",
+        "--spec-draft-n-max",
+        "3",
+        "--spec-draft-p-min",
+        "0.5"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 3775102976.0,
+      "started_utc": "2026-10-09T04:42:45.5992010Z",
+      "healthy": true,
+      "peak_ws_bytes": 742649856,
+      "peak_private_bytes": 26348433408,
+      "min_avail_bytes": 11393662976,
+      "avail_before_bytes": 12281008128,
+      "requests": [
+        {
+          "tag": "pg-orn-10090030-M-a1-g-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=44.55 ttft_ms=292.3 gen_n=8 decode_tps=24.1 draft=4/5"
+        },
+        {
+          "tag": "pg-orn-10090030-M-a1-g-r1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=56.85 ttft_ms=233.4 gen_n=128 decode_tps=34.38 draft=79/90"
+        },
+        {
+          "tag": "pg-orn-10090030-M-a1-g-r1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=401.99 ttft_ms=1543.9 gen_n=128 decode_tps=34.66 draft=78/88"
+        },
+        {
+          "tag": "pg-orn-10090030-M-a1-g-r2-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=56.77 ttft_ms=244.4 gen_n=128 decode_tps=33.69 draft=79/105"
+        },
+        {
+          "tag": "pg-orn-10090030-M-a1-g-r2-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=430.96 ttft_ms=1466.8 gen_n=128 decode_tps=34.81 draft=78/88"
+        },
+        {
+          "tag": "pg-orn-10090030-M-a1-g-t-chat",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=48 prefill_tps=118.77 ttft_ms=463.7 gen_n=512 decode_tps=27.87 draft=246/388 answer=False reasoning_chars=2089 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-M-a1-g-t-code",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=75 prefill_tps=157.56 ttft_ms=526.2 gen_n=512 decode_tps=36.41 draft=339/414 answer=False reasoning_chars=1916 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-M-a1-g-t-json",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=87 prefill_tps=186.79 ttft_ms=502.7 gen_n=480 decode_tps=38.28 draft=331/387 answer=True reasoning_chars=630 finish=stop"
+        },
+        {
+          "tag": "pg-orn-10090030-M-a1-g-t-reason",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=119 prefill_tps=243.53 ttft_ms=533.9 gen_n=768 decode_tps=34.79 draft=496/620 answer=False reasoning_chars=1741 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-M-a1-g-s-short",
+          "exit": 0,
+          "summary": "path=completion regime=sampled prompt_n=12 prefill_tps=56.94 ttft_ms=257.0 gen_n=128 decode_tps=34.6 draft=79/93"
+        },
+        {
+          "tag": "pg-orn-10090030-M-a1-g-s-chat",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=48 prefill_tps=131.34 ttft_ms=408.7 gen_n=512 decode_tps=28.33 draft=254/385 answer=False reasoning_chars=2044 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-M-a1-g-s-code",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=75 prefill_tps=162.54 ttft_ms=495.2 gen_n=512 decode_tps=36.23 draft=339/421 answer=False reasoning_chars=1868 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-M-a1-g-s-json",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=87 prefill_tps=180.68 ttft_ms=520.2 gen_n=445 decode_tps=36.33 draft=298/369 answer=True reasoning_chars=524 finish=stop"
+        },
+        {
+          "tag": "pg-orn-10090030-M-a1-g-s-reason",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=119 prefill_tps=241.28 ttft_ms=543.6 gen_n=768 decode_tps=34.03 draft=492/641 answer=False reasoning_chars=1678 finish=length"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 20148,
+      "load_s": 8.6,
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.07.464.870 I common_speculative_init_result: creating MTP draft context against the target model 'D:\\ArifiLabs\\models\\hf\\ornith-ai\\Ornith-1.5-35B-A3B-GGUF\\Ornith-1.5-35B-Q4_K_M.gguf'\r",
+        "0.09.307.217 I slot print_timing: id  0 | task 0 | draft acceptance = 0.80000 (    4 accepted /     5 generated), mean len =  2.33\r",
+        "0.09.307.218 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 4 accepted)\r",
+        "0.09.307.220 I slot print_timing: id  0 | task 0 | spec round cost  = draft 113875 us/3, verify 164591 us/3, plain 0 us/0, process 8420 us, save 0 us, restore 0 us\r",
+        "0.14.682.942 I slot print_timing: id  0 | task 6 | draft acceptance = 0.87778 (   79 accepted /    90 generated), mean len =  2.80\r",
+        "0.14.682.942 I slot print_timing: id  0 | task 6 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 79 accepted)\r",
+        "0.14.682.944 I slot print_timing: id  0 | task 6 | spec round cost  = draft 790923 us/48, verify 2499709 us/44, plain 200901 us/4, process 143319 us, save 0 us, restore 0 us\r",
+        "0.22.016.077 I slot print_timing: id  0 | task 57 | draft acceptance = 0.88636 (   78 accepted /    88 generated), mean len =  2.86\r",
+        "0.22.016.078 I slot print_timing: id  0 | task 57 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 78 accepted)\r",
+        "0.22.016.081 I slot print_timing: id  0 | task 57 | spec round cost  = draft 807659 us/49, verify 2365313 us/42, plain 254130 us/7, process 176143 us, save 0 us, restore 0 us\r",
+        "0.26.888.788 I slot print_timing: id  0 | task 110 | draft acceptance = 0.75238 (   79 accepted /   105 generated), mean len =  2.72\r",
+        "0.26.888.789 I slot print_timing: id  0 | task 110 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 79 accepted)\r",
+        "0.26.888.791 I slot print_timing: id  0 | task 110 | spec round cost  = draft 843073 us/48, verify 2631636 us/46, plain 77380 us/2, process 152492 us, save 0 us, restore 0 us\r",
+        "0.34.030.547 I slot print_timing: id  0 | task 161 | draft acceptance = 0.88636 (   78 accepted /    88 generated), mean len =  2.86\r",
+        "0.34.030.548 I slot print_timing: id  0 | task 161 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 78 accepted)\r",
+        "0.34.030.550 I slot print_timing: id  0 | task 161 | spec round cost  = draft 801983 us/49, verify 2360891 us/42, plain 249942 us/7, process 173474 us, save 0 us, restore 0 us\r",
+        "0.53.780.916 I slot print_timing: id  0 | task 214 | draft acceptance = 0.63402 (  246 accepted /   388 generated), mean len =  2.26\r",
+        "0.53.780.917 I slot print_timing: id  0 | task 214 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 246 accepted)\r",
+        "0.53.780.921 I slot print_timing: id  0 | task 214 | spec round cost  = draft 3960458 us/264, verify 10783266 us/195, plain 2547186 us/70, process 772601 us, save 0 us, restore 0 us\r",
+        "1.09.622.280 I slot print_timing: id  0 | task 482 | draft acceptance = 0.81884 (  339 accepted /   414 generated), mean len =  3.15\r",
+        "1.09.622.281 I slot print_timing: id  0 | task 482 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 339 accepted)\r",
+        "1.09.622.283 I slot print_timing: id  0 | task 482 | spec round cost  = draft 3221076 us/172, verify 9473962 us/158, plain 526006 us/14, process 580897 us, save 0 us, restore 0 us\r",
+        "1.24.190.559 I slot print_timing: id  0 | task 657 | draft acceptance = 0.85530 (  331 accepted /   387 generated), mean len =  3.30\r",
+        "1.24.190.560 I slot print_timing: id  0 | task 657 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 331 accepted)\r",
+        "1.24.190.562 I slot print_timing: id  0 | task 657 | spec round cost  = draft 2897753 us/149, verify 8673035 us/144, plain 188214 us/5, process 531677 us, save 0 us, restore 0 us\r",
+        "1.47.826.900 I slot print_timing: id  0 | task 809 | draft acceptance = 0.80000 (  496 accepted /   620 generated), mean len =  2.98\r",
+        "1.47.826.901 I slot print_timing: id  0 | task 809 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 496 accepted)\r",
+        "1.47.826.903 I slot print_timing: id  0 | task 809 | spec round cost  = draft 5006051 us/270, verify 14933256 us/250, plain 787072 us/21, process 943382 us, save 0 us, restore 0 us\r",
+        "1.53.320.262 I slot print_timing: id  0 | task 1083 | draft acceptance = 0.84946 (   79 accepted /    93 generated), mean len =  2.88\r",
+        "1.53.320.264 I slot print_timing: id  0 | task 1083 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 79 accepted)\r",
+        "1.53.320.268 I slot print_timing: id  0 | task 1083 | spec round cost  = draft 795870 us/47, verify 2415500 us/42, plain 227152 us/6, process 168928 us, save 0 us, restore 0 us\r",
+        "2.13.883.595 I slot print_timing: id  0 | task 1134 | draft acceptance = 0.65974 (  254 accepted /   385 generated), mean len =  2.29\r",
+        "2.13.883.596 I slot print_timing: id  0 | task 1134 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 254 accepted)\r",
+        "2.13.883.598 I slot print_timing: id  0 | task 1134 | spec round cost  = draft 3919588 us/256, verify 10841657 us/197, plain 2200502 us/60, process 792686 us, save 0 us, restore 0 us\r",
+        "2.30.168.200 I slot print_timing: id  0 | task 1394 | draft acceptance = 0.80523 (  339 accepted /   421 generated), mean len =  3.08\r",
+        "2.30.168.201 I slot print_timing: id  0 | task 1394 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 339 accepted)\r",
+        "2.30.168.202 I slot print_timing: id  0 | task 1394 | spec round cost  = draft 3257320 us/171, verify 9738048 us/163, plain 336017 us/9, process 525796 us, save 0 us, restore 0 us\r",
+        "2.44.429.333 I slot print_timing: id  0 | task 1569 | draft acceptance = 0.80759 (  298 accepted /   369 generated), mean len =  3.19\r",
+        "2.44.429.334 I slot print_timing: id  0 | task 1569 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 298 accepted)\r",
+        "2.44.429.336 I slot print_timing: id  0 | task 1569 | spec round cost  = draft 2804865 us/147, verify 8248475 us/136, plain 424360 us/11, process 528499 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-09T04:45:58.5832298Z"
+    },
+    {
+      "arm": "M-b1-p",
+      "args": [
+        "-m",
+        "D:\\ArifiLabs\\models\\hf\\ornith-ai\\Ornith-1.5-35B-A3B-GGUF\\Ornith-1.5-35B-Q4_K_M.gguf",
+        "-ngl",
+        "999",
+        "-np",
+        "1",
+        "-fa",
+        "on",
+        "-c",
+        "4096",
+        "-ub",
+        "512",
+        "-b",
+        "2048",
+        "-lm",
+        "dio",
+        "--lazy-mode",
+        "on",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "--spec-type",
+        "draft-mtp",
+        "--spec-draft-n-max",
+        "3",
+        "--spec-draft-p-min",
+        "0.5"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 3778060288.0,
+      "started_utc": "2026-10-09T04:46:31.0506751Z",
+      "healthy": true,
+      "peak_ws_bytes": 768524288,
+      "peak_private_bytes": 26361942016,
+      "min_avail_bytes": 11312267264,
+      "avail_before_bytes": 12225331200,
+      "requests": [
+        {
+          "tag": "pg-orn-10090030-M-b1-p-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=39.48 ttft_ms=327.9 gen_n=8 decode_tps=24.58 draft=4/5"
+        },
+        {
+          "tag": "pg-orn-10090030-M-b1-p-r1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=56.29 ttft_ms=252.4 gen_n=128 decode_tps=34.43 draft=79/90"
+        },
+        {
+          "tag": "pg-orn-10090030-M-b1-p-r1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=400.68 ttft_ms=1542.4 gen_n=128 decode_tps=34.44 draft=78/88"
+        },
+        {
+          "tag": "pg-orn-10090030-M-b1-p-r2-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=56.28 ttft_ms=254.1 gen_n=128 decode_tps=33.2 draft=79/105"
+        },
+        {
+          "tag": "pg-orn-10090030-M-b1-p-r2-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=427.66 ttft_ms=1470.6 gen_n=128 decode_tps=34.04 draft=78/88"
+        },
+        {
+          "tag": "pg-orn-10090030-M-b1-p-t-chat",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=48 prefill_tps=120.0 ttft_ms=452.2 gen_n=512 decode_tps=27.47 draft=246/388 answer=False reasoning_chars=2089 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-M-b1-p-t-code",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=75 prefill_tps=154.85 ttft_ms=546.2 gen_n=512 decode_tps=36.1 draft=339/414 answer=False reasoning_chars=1916 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-M-b1-p-t-json",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=87 prefill_tps=183.46 ttft_ms=519.6 gen_n=480 decode_tps=38.25 draft=331/387 answer=True reasoning_chars=630 finish=stop"
+        },
+        {
+          "tag": "pg-orn-10090030-M-b1-p-t-reason",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=119 prefill_tps=242.1 ttft_ms=532.1 gen_n=768 decode_tps=34.65 draft=496/620 answer=False reasoning_chars=1741 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-M-b1-p-s-short",
+          "exit": 0,
+          "summary": "path=completion regime=sampled prompt_n=12 prefill_tps=57.05 ttft_ms=255.1 gen_n=128 decode_tps=34.41 draft=79/93"
+        },
+        {
+          "tag": "pg-orn-10090030-M-b1-p-s-chat",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=48 prefill_tps=129.26 ttft_ms=419.2 gen_n=512 decode_tps=28.04 draft=254/385 answer=False reasoning_chars=2044 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-M-b1-p-s-code",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=75 prefill_tps=158.3 ttft_ms=510.9 gen_n=512 decode_tps=35.96 draft=339/421 answer=False reasoning_chars=1868 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-M-b1-p-s-json",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=87 prefill_tps=176.3 ttft_ms=537.8 gen_n=445 decode_tps=36.14 draft=298/369 answer=True reasoning_chars=524 finish=stop"
+        },
+        {
+          "tag": "pg-orn-10090030-M-b1-p-s-reason",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=119 prefill_tps=243.14 ttft_ms=538.3 gen_n=768 decode_tps=33.84 draft=492/641 answer=False reasoning_chars=1678 finish=length"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 28384,
+      "load_s": 7.6,
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.07.465.711 I common_speculative_init_result: creating MTP draft context against the target model 'D:\\ArifiLabs\\models\\hf\\ornith-ai\\Ornith-1.5-35B-A3B-GGUF\\Ornith-1.5-35B-Q4_K_M.gguf'\r",
+        "0.08.336.052 I slot print_timing: id  0 | task 0 | draft acceptance = 0.80000 (    4 accepted /     5 generated), mean len =  2.33\r",
+        "0.08.336.053 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 4 accepted)\r",
+        "0.08.336.055 I slot print_timing: id  0 | task 0 | spec round cost  = draft 114331 us/3, verify 160991 us/3, plain 0 us/0, process 6027 us, save 0 us, restore 0 us\r",
+        "0.13.708.536 I slot print_timing: id  0 | task 6 | draft acceptance = 0.87778 (   79 accepted /    90 generated), mean len =  2.80\r",
+        "0.13.708.537 I slot print_timing: id  0 | task 6 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 79 accepted)\r",
+        "0.13.708.539 I slot print_timing: id  0 | task 6 | spec round cost  = draft 781434 us/48, verify 2506107 us/44, plain 199945 us/4, process 141967 us, save 0 us, restore 0 us\r",
+        "0.21.039.894 I slot print_timing: id  0 | task 57 | draft acceptance = 0.88636 (   78 accepted /    88 generated), mean len =  2.86\r",
+        "0.21.039.895 I slot print_timing: id  0 | task 57 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 78 accepted)\r",
+        "0.21.039.897 I slot print_timing: id  0 | task 57 | spec round cost  = draft 805831 us/49, verify 2390261 us/42, plain 254250 us/7, process 176753 us, save 0 us, restore 0 us\r",
+        "0.25.918.276 I slot print_timing: id  0 | task 110 | draft acceptance = 0.75238 (   79 accepted /   105 generated), mean len =  2.72\r",
+        "0.25.918.277 I slot print_timing: id  0 | task 110 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 79 accepted)\r",
+        "0.25.918.279 I slot print_timing: id  0 | task 110 | spec round cost  = draft 858996 us/48, verify 2666364 us/46, plain 75269 us/2, process 162553 us, save 0 us, restore 0 us\r",
+        "0.33.085.596 I slot print_timing: id  0 | task 161 | draft acceptance = 0.88636 (   78 accepted /    88 generated), mean len =  2.86\r",
+        "0.33.085.597 I slot print_timing: id  0 | task 161 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 78 accepted)\r",
+        "0.33.085.599 I slot print_timing: id  0 | task 161 | spec round cost  = draft 816965 us/49, verify 2409289 us/42, plain 257635 us/7, process 185904 us, save 0 us, restore 0 us\r",
+        "0.52.977.682 I slot print_timing: id  0 | task 214 | draft acceptance = 0.63402 (  246 accepted /   388 generated), mean len =  2.26\r",
+        "0.52.977.683 I slot print_timing: id  0 | task 214 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 246 accepted)\r",
+        "0.52.977.687 I slot print_timing: id  0 | task 214 | spec round cost  = draft 3966912 us/264, verify 10878965 us/195, plain 2593669 us/70, process 883345 us, save 0 us, restore 0 us\r",
+        "1.08.765.125 I slot print_timing: id  0 | task 482 | draft acceptance = 0.81884 (  339 accepted /   414 generated), mean len =  3.15\r",
+        "1.08.765.128 I slot print_timing: id  0 | task 482 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 339 accepted)\r",
+        "1.08.765.130 I slot print_timing: id  0 | task 482 | spec round cost  = draft 3235914 us/172, verify 9548917 us/158, plain 536034 us/14, process 590507 us, save 0 us, restore 0 us\r",
+        "1.23.197.189 I slot print_timing: id  0 | task 657 | draft acceptance = 0.85530 (  331 accepted /   387 generated), mean len =  3.30\r",
+        "1.23.197.190 I slot print_timing: id  0 | task 657 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 331 accepted)\r",
+        "1.23.197.192 I slot print_timing: id  0 | task 657 | spec round cost  = draft 2883239 us/149, verify 8696969 us/144, plain 194196 us/5, process 526851 us, save 0 us, restore 0 us\r",
+        "1.46.899.680 I slot print_timing: id  0 | task 809 | draft acceptance = 0.80000 (  496 accepted /   620 generated), mean len =  2.98\r",
+        "1.46.899.682 I slot print_timing: id  0 | task 809 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 496 accepted)\r",
+        "1.46.899.686 I slot print_timing: id  0 | task 809 | spec round cost  = draft 4989804 us/270, verify 15000302 us/250, plain 800862 us/21, process 972680 us, save 0 us, restore 0 us\r",
+        "1.52.319.971 I slot print_timing: id  0 | task 1083 | draft acceptance = 0.84946 (   79 accepted /    93 generated), mean len =  2.88\r",
+        "1.52.319.975 I slot print_timing: id  0 | task 1083 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 79 accepted)\r",
+        "1.52.319.979 I slot print_timing: id  0 | task 1083 | spec round cost  = draft 790843 us/47, verify 2446123 us/42, plain 230613 us/6, process 160047 us, save 0 us, restore 0 us\r",
+        "2.13.061.039 I slot print_timing: id  0 | task 1134 | draft acceptance = 0.65974 (  254 accepted /   385 generated), mean len =  2.29\r",
+        "2.13.061.041 I slot print_timing: id  0 | task 1134 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 254 accepted)\r",
+        "2.13.061.043 I slot print_timing: id  0 | task 1134 | spec round cost  = draft 3933790 us/256, verify 10974284 us/197, plain 2235730 us/60, process 790244 us, save 0 us, restore 0 us\r",
+        "2.29.275.159 I slot print_timing: id  0 | task 1394 | draft acceptance = 0.80523 (  339 accepted /   421 generated), mean len =  3.08\r",
+        "2.29.275.162 I slot print_timing: id  0 | task 1394 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 339 accepted)\r",
+        "2.29.275.165 I slot print_timing: id  0 | task 1394 | spec round cost  = draft 3254569 us/171, verify 9769225 us/163, plain 344520 us/9, process 594555 us, save 0 us, restore 0 us\r",
+        "2.43.493.233 I slot print_timing: id  0 | task 1569 | draft acceptance = 0.80759 (  298 accepted /   369 generated), mean len =  3.19\r",
+        "2.43.493.234 I slot print_timing: id  0 | task 1569 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 298 accepted)\r",
+        "2.43.493.236 I slot print_timing: id  0 | task 1569 | spec round cost  = draft 2806754 us/147, verify 8293841 us/136, plain 434928 us/11, process 537368 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-09T04:49:42.9812214Z"
+    },
+    {
+      "arm": "M-b2-p",
+      "args": [
+        "-m",
+        "D:\\ArifiLabs\\models\\hf\\ornith-ai\\Ornith-1.5-35B-A3B-GGUF\\Ornith-1.5-35B-Q4_K_M.gguf",
+        "-ngl",
+        "999",
+        "-np",
+        "1",
+        "-fa",
+        "on",
+        "-c",
+        "4096",
+        "-ub",
+        "512",
+        "-b",
+        "2048",
+        "-lm",
+        "dio",
+        "--lazy-mode",
+        "on",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "--spec-type",
+        "draft-mtp",
+        "--spec-draft-n-max",
+        "3",
+        "--spec-draft-p-min",
+        "0.5"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 3780153344.0,
+      "started_utc": "2026-10-09T04:50:15.3763431Z",
+      "healthy": true,
+      "peak_ws_bytes": 768057344,
+      "peak_private_bytes": 26364055552,
+      "min_avail_bytes": 10243072000,
+      "avail_before_bytes": 12190851072,
+      "requests": [
+        {
+          "tag": "pg-orn-10090030-M-b2-p-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=40.09 ttft_ms=335.7 gen_n=8 decode_tps=24.25 draft=4/5"
+        },
+        {
+          "tag": "pg-orn-10090030-M-b2-p-r1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=53.97 ttft_ms=255.7 gen_n=128 decode_tps=34.16 draft=79/90"
+        },
+        {
+          "tag": "pg-orn-10090030-M-b2-p-r1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=393.95 ttft_ms=1552.2 gen_n=128 decode_tps=34.67 draft=78/88"
+        },
+        {
+          "tag": "pg-orn-10090030-M-b2-p-r2-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=56.34 ttft_ms=258.2 gen_n=128 decode_tps=33.18 draft=79/105"
+        },
+        {
+          "tag": "pg-orn-10090030-M-b2-p-r2-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=430.54 ttft_ms=1466.1 gen_n=128 decode_tps=34.65 draft=78/88"
+        },
+        {
+          "tag": "pg-orn-10090030-M-b2-p-t-chat",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=48 prefill_tps=119.54 ttft_ms=461.9 gen_n=512 decode_tps=27.46 draft=246/388 answer=False reasoning_chars=2089 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-M-b2-p-t-code",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=75 prefill_tps=158.13 ttft_ms=534.6 gen_n=512 decode_tps=36.22 draft=339/414 answer=False reasoning_chars=1916 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-M-b2-p-t-json",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=87 prefill_tps=185.21 ttft_ms=520.2 gen_n=480 decode_tps=37.77 draft=331/387 answer=True reasoning_chars=630 finish=stop"
+        },
+        {
+          "tag": "pg-orn-10090030-M-b2-p-t-reason",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=119 prefill_tps=222.32 ttft_ms=568.0 gen_n=768 decode_tps=32.41 draft=496/620 answer=False reasoning_chars=1741 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-M-b2-p-s-short",
+          "exit": 0,
+          "summary": "path=completion regime=sampled prompt_n=12 prefill_tps=57.6 ttft_ms=245.7 gen_n=128 decode_tps=34.1 draft=79/93"
+        },
+        {
+          "tag": "pg-orn-10090030-M-b2-p-s-chat",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=48 prefill_tps=116.69 ttft_ms=459.3 gen_n=512 decode_tps=27.69 draft=254/385 answer=False reasoning_chars=2044 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-M-b2-p-s-code",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=75 prefill_tps=156.04 ttft_ms=540.1 gen_n=512 decode_tps=35.85 draft=339/421 answer=False reasoning_chars=1868 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-M-b2-p-s-json",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=87 prefill_tps=179.43 ttft_ms=534.7 gen_n=445 decode_tps=36.37 draft=298/369 answer=True reasoning_chars=524 finish=stop"
+        },
+        {
+          "tag": "pg-orn-10090030-M-b2-p-s-reason",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=119 prefill_tps=240.3 ttft_ms=535.7 gen_n=768 decode_tps=33.93 draft=492/641 answer=False reasoning_chars=1678 finish=length"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 25224,
+      "load_s": 7.6,
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.07.426.280 I common_speculative_init_result: creating MTP draft context against the target model 'D:\\ArifiLabs\\models\\hf\\ornith-ai\\Ornith-1.5-35B-A3B-GGUF\\Ornith-1.5-35B-Q4_K_M.gguf'\r",
+        "0.08.329.806 I slot print_timing: id  0 | task 0 | draft acceptance = 0.80000 (    4 accepted /     5 generated), mean len =  2.33\r",
+        "0.08.329.807 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 4 accepted)\r",
+        "0.08.329.808 I slot print_timing: id  0 | task 0 | spec round cost  = draft 112067 us/3, verify 163533 us/3, plain 0 us/0, process 9625 us, save 0 us, restore 0 us\r",
+        "0.13.727.508 I slot print_timing: id  0 | task 6 | draft acceptance = 0.87778 (   79 accepted /    90 generated), mean len =  2.80\r",
+        "0.13.727.509 I slot print_timing: id  0 | task 6 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 79 accepted)\r",
+        "0.13.727.510 I slot print_timing: id  0 | task 6 | spec round cost  = draft 788498 us/48, verify 2515140 us/44, plain 202615 us/4, process 150999 us, save 0 us, restore 0 us\r",
+        "0.21.032.147 I slot print_timing: id  0 | task 57 | draft acceptance = 0.88636 (   78 accepted /    88 generated), mean len =  2.86\r",
+        "0.21.032.148 I slot print_timing: id  0 | task 57 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 78 accepted)\r",
+        "0.21.032.149 I slot print_timing: id  0 | task 57 | spec round cost  = draft 806400 us/49, verify 2391512 us/42, plain 257940 us/7, process 147200 us, save 0 us, restore 0 us\r",
+        "0.25.919.745 I slot print_timing: id  0 | task 110 | draft acceptance = 0.75238 (   79 accepted /   105 generated), mean len =  2.72\r",
+        "0.25.919.746 I slot print_timing: id  0 | task 110 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 79 accepted)\r",
+        "0.25.919.748 I slot print_timing: id  0 | task 110 | spec round cost  = draft 855728 us/48, verify 2662715 us/46, plain 77800 us/2, process 167639 us, save 0 us, restore 0 us\r",
+        "0.33.007.182 I slot print_timing: id  0 | task 161 | draft acceptance = 0.88636 (   78 accepted /    88 generated), mean len =  2.86\r",
+        "0.33.007.183 I slot print_timing: id  0 | task 161 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 78 accepted)\r",
+        "0.33.007.185 I slot print_timing: id  0 | task 161 | spec round cost  = draft 805397 us/49, verify 2393529 us/42, plain 253825 us/7, process 155251 us, save 0 us, restore 0 us\r",
+        "0.52.988.502 I slot print_timing: id  0 | task 214 | draft acceptance = 0.63402 (  246 accepted /   388 generated), mean len =  2.26\r",
+        "0.52.988.502 I slot print_timing: id  0 | task 214 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 246 accepted)\r",
+        "0.52.988.507 I slot print_timing: id  0 | task 214 | spec round cost  = draft 3988726 us/264, verify 10918704 us/195, plain 2578942 us/70, process 844416 us, save 0 us, restore 0 us\r",
+        "1.08.649.535 I slot print_timing: id  0 | task 482 | draft acceptance = 0.81884 (  339 accepted /   414 generated), mean len =  3.15\r",
+        "1.08.649.536 I slot print_timing: id  0 | task 482 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 339 accepted)\r",
+        "1.08.649.538 I slot print_timing: id  0 | task 482 | spec round cost  = draft 3231553 us/172, verify 9508581 us/158, plain 529593 us/14, process 599090 us, save 0 us, restore 0 us\r",
+        "1.23.324.343 I slot print_timing: id  0 | task 657 | draft acceptance = 0.85530 (  331 accepted /   387 generated), mean len =  3.30\r",
+        "1.23.324.346 I slot print_timing: id  0 | task 657 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 331 accepted)\r",
+        "1.23.324.348 I slot print_timing: id  0 | task 657 | spec round cost  = draft 2937017 us/149, verify 8770852 us/144, plain 197350 us/5, process 551738 us, save 0 us, restore 0 us\r",
+        "1.48.446.507 I slot print_timing: id  0 | task 809 | draft acceptance = 0.80000 (  496 accepted /   620 generated), mean len =  2.98\r",
+        "1.48.446.510 I slot print_timing: id  0 | task 809 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 496 accepted)\r",
+        "1.48.446.517 I slot print_timing: id  0 | task 809 | spec round cost  = draft 5471694 us/270, verify 16227892 us/250, plain 872079 us/21, process 647100 us, save 0 us, restore 0 us\r",
+        "1.54.378.632 I slot print_timing: id  0 | task 1083 | draft acceptance = 0.84946 (   79 accepted /    93 generated), mean len =  2.88\r",
+        "1.54.378.633 I slot print_timing: id  0 | task 1083 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 79 accepted)\r",
+        "1.54.378.636 I slot print_timing: id  0 | task 1083 | spec round cost  = draft 803861 us/47, verify 2472552 us/42, plain 235399 us/6, process 146227 us, save 0 us, restore 0 us\r",
+        "2.15.342.263 I slot print_timing: id  0 | task 1134 | draft acceptance = 0.65974 (  254 accepted /   385 generated), mean len =  2.29\r",
+        "2.15.342.265 I slot print_timing: id  0 | task 1134 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 254 accepted)\r",
+        "2.15.342.267 I slot print_timing: id  0 | task 1134 | spec round cost  = draft 4003256 us/256, verify 11129699 us/197, plain 2281100 us/60, process 738093 us, save 0 us, restore 0 us\r",
+        "2.31.351.962 I slot print_timing: id  0 | task 1394 | draft acceptance = 0.80523 (  339 accepted /   421 generated), mean len =  3.08\r",
+        "2.31.351.963 I slot print_timing: id  0 | task 1394 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 339 accepted)\r",
+        "2.31.351.965 I slot print_timing: id  0 | task 1394 | spec round cost  = draft 3268369 us/171, verify 9771783 us/163, plain 345517 us/9, process 615721 us, save 0 us, restore 0 us\r",
+        "2.45.395.175 I slot print_timing: id  0 | task 1569 | draft acceptance = 0.80759 (  298 accepted /   369 generated), mean len =  3.19\r",
+        "2.45.395.176 I slot print_timing: id  0 | task 1569 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 298 accepted)\r",
+        "2.45.395.178 I slot print_timing: id  0 | task 1569 | spec round cost  = draft 2772922 us/147, verify 8284826 us/136, plain 425426 us/11, process 510062 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-09T04:53:29.2703899Z"
+    },
+    {
+      "arm": "M-a2-g",
+      "args": [
+        "-m",
+        "D:\\ArifiLabs\\models\\hf\\ornith-ai\\Ornith-1.5-35B-A3B-GGUF\\Ornith-1.5-35B-Q4_K_M.gguf",
+        "-ngl",
+        "999",
+        "-np",
+        "1",
+        "-fa",
+        "on",
+        "-c",
+        "4096",
+        "-ub",
+        "512",
+        "-b",
+        "2048",
+        "-lm",
+        "dio",
+        "--lazy-mode",
+        "on",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "--spec-type",
+        "draft-mtp",
+        "--spec-draft-n-max",
+        "3",
+        "--spec-draft-p-min",
+        "0.5"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 3785142272.0,
+      "started_utc": "2026-10-09T04:54:01.7152166Z",
+      "healthy": true,
+      "peak_ws_bytes": 769015808,
+      "peak_private_bytes": 26350153728,
+      "min_avail_bytes": 10486599680,
+      "avail_before_bytes": 11395960832,
+      "requests": [
+        {
+          "tag": "pg-orn-10090030-M-a2-g-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=44.01 ttft_ms=301.4 gen_n=8 decode_tps=24.38 draft=4/5"
+        },
+        {
+          "tag": "pg-orn-10090030-M-a2-g-r1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=53.6 ttft_ms=254.4 gen_n=128 decode_tps=34.56 draft=79/90"
+        },
+        {
+          "tag": "pg-orn-10090030-M-a2-g-r1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=401.85 ttft_ms=1532.6 gen_n=128 decode_tps=34.8 draft=78/88"
+        },
+        {
+          "tag": "pg-orn-10090030-M-a2-g-r2-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=56.28 ttft_ms=252.0 gen_n=128 decode_tps=33.43 draft=79/105"
+        },
+        {
+          "tag": "pg-orn-10090030-M-a2-g-r2-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=426.7 ttft_ms=1470.9 gen_n=128 decode_tps=34.77 draft=78/88"
+        },
+        {
+          "tag": "pg-orn-10090030-M-a2-g-t-chat",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=48 prefill_tps=120.53 ttft_ms=451.3 gen_n=512 decode_tps=27.85 draft=246/388 answer=False reasoning_chars=2089 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-M-a2-g-t-code",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=75 prefill_tps=160.57 ttft_ms=512.3 gen_n=512 decode_tps=36.25 draft=339/414 answer=False reasoning_chars=1916 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-M-a2-g-t-json",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=87 prefill_tps=187.1 ttft_ms=510.0 gen_n=480 decode_tps=38.43 draft=331/387 answer=True reasoning_chars=630 finish=stop"
+        },
+        {
+          "tag": "pg-orn-10090030-M-a2-g-t-reason",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=119 prefill_tps=244.17 ttft_ms=523.5 gen_n=768 decode_tps=34.73 draft=496/620 answer=False reasoning_chars=1741 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-M-a2-g-s-short",
+          "exit": 0,
+          "summary": "path=completion regime=sampled prompt_n=12 prefill_tps=57.33 ttft_ms=268.8 gen_n=128 decode_tps=34.85 draft=79/93"
+        },
+        {
+          "tag": "pg-orn-10090030-M-a2-g-s-chat",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=48 prefill_tps=132.46 ttft_ms=413.4 gen_n=512 decode_tps=28.28 draft=254/385 answer=False reasoning_chars=2044 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-M-a2-g-s-code",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=75 prefill_tps=156.75 ttft_ms=514.1 gen_n=512 decode_tps=35.94 draft=339/421 answer=False reasoning_chars=1868 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-M-a2-g-s-json",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=87 prefill_tps=184.37 ttft_ms=521.0 gen_n=445 decode_tps=36.49 draft=298/369 answer=True reasoning_chars=524 finish=stop"
+        },
+        {
+          "tag": "pg-orn-10090030-M-a2-g-s-reason",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=119 prefill_tps=241.5 ttft_ms=536.5 gen_n=768 decode_tps=34.05 draft=492/641 answer=False reasoning_chars=1678 finish=length"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 25696,
+      "load_s": 7.6,
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.07.399.271 I common_speculative_init_result: creating MTP draft context against the target model 'D:\\ArifiLabs\\models\\hf\\ornith-ai\\Ornith-1.5-35B-A3B-GGUF\\Ornith-1.5-35B-Q4_K_M.gguf'\r",
+        "0.08.365.183 I slot print_timing: id  0 | task 0 | draft acceptance = 0.80000 (    4 accepted /     5 generated), mean len =  2.33\r",
+        "0.08.365.184 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 4 accepted)\r",
+        "0.08.365.186 I slot print_timing: id  0 | task 0 | spec round cost  = draft 115359 us/3, verify 160931 us/3, plain 0 us/0, process 7371 us, save 0 us, restore 0 us\r",
+        "0.13.719.448 I slot print_timing: id  0 | task 6 | draft acceptance = 0.87778 (   79 accepted /    90 generated), mean len =  2.80\r",
+        "0.13.719.449 I slot print_timing: id  0 | task 6 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 79 accepted)\r",
+        "0.13.719.451 I slot print_timing: id  0 | task 6 | spec round cost  = draft 781387 us/48, verify 2500729 us/44, plain 199170 us/4, process 131858 us, save 0 us, restore 0 us\r",
+        "0.21.003.077 I slot print_timing: id  0 | task 57 | draft acceptance = 0.88636 (   78 accepted /    88 generated), mean len =  2.86\r",
+        "0.21.003.078 I slot print_timing: id  0 | task 57 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 78 accepted)\r",
+        "0.21.003.080 I slot print_timing: id  0 | task 57 | spec round cost  = draft 802641 us/49, verify 2378866 us/42, plain 251696 us/7, process 157341 us, save 0 us, restore 0 us\r",
+        "0.25.925.346 I slot print_timing: id  0 | task 110 | draft acceptance = 0.75238 (   79 accepted /   105 generated), mean len =  2.72\r",
+        "0.25.925.347 I slot print_timing: id  0 | task 110 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 79 accepted)\r",
+        "0.25.925.349 I slot print_timing: id  0 | task 110 | spec round cost  = draft 851951 us/48, verify 2642878 us/46, plain 75317 us/2, process 166849 us, save 0 us, restore 0 us\r",
+        "0.33.030.661 I slot print_timing: id  0 | task 161 | draft acceptance = 0.88636 (   78 accepted /    88 generated), mean len =  2.86\r",
+        "0.33.030.662 I slot print_timing: id  0 | task 161 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 78 accepted)\r",
+        "0.33.030.664 I slot print_timing: id  0 | task 161 | spec round cost  = draft 807677 us/49, verify 2377702 us/42, plain 254005 us/7, process 153740 us, save 0 us, restore 0 us\r",
+        "0.52.752.419 I slot print_timing: id  0 | task 214 | draft acceptance = 0.63402 (  246 accepted /   388 generated), mean len =  2.26\r",
+        "0.52.752.419 I slot print_timing: id  0 | task 214 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 246 accepted)\r",
+        "0.52.752.422 I slot print_timing: id  0 | task 214 | spec round cost  = draft 3934971 us/264, verify 10789659 us/195, plain 2550301 us/70, process 799040 us, save 0 us, restore 0 us\r",
+        "1.08.689.727 I slot print_timing: id  0 | task 482 | draft acceptance = 0.81884 (  339 accepted /   414 generated), mean len =  3.15\r",
+        "1.08.689.728 I slot print_timing: id  0 | task 482 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 339 accepted)\r",
+        "1.08.689.730 I slot print_timing: id  0 | task 482 | spec round cost  = draft 3228735 us/172, verify 9471110 us/158, plain 522714 us/14, process 630415 us, save 0 us, restore 0 us\r",
+        "1.23.135.620 I slot print_timing: id  0 | task 657 | draft acceptance = 0.85530 (  331 accepted /   387 generated), mean len =  3.30\r",
+        "1.23.135.621 I slot print_timing: id  0 | task 657 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 331 accepted)\r",
+        "1.23.135.623 I slot print_timing: id  0 | task 657 | spec round cost  = draft 2874495 us/149, verify 8670822 us/144, plain 190695 us/5, process 507228 us, save 0 us, restore 0 us\r",
+        "1.46.857.141 I slot print_timing: id  0 | task 809 | draft acceptance = 0.80000 (  496 accepted /   620 generated), mean len =  2.98\r",
+        "1.46.857.144 I slot print_timing: id  0 | task 809 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 496 accepted)\r",
+        "1.46.857.146 I slot print_timing: id  0 | task 809 | spec round cost  = draft 4985291 us/270, verify 14972390 us/250, plain 805489 us/21, process 945069 us, save 0 us, restore 0 us\r",
+        "1.52.291.962 I slot print_timing: id  0 | task 1083 | draft acceptance = 0.84946 (   79 accepted /    93 generated), mean len =  2.88\r",
+        "1.52.291.963 I slot print_timing: id  0 | task 1083 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 79 accepted)\r",
+        "1.52.291.965 I slot print_timing: id  0 | task 1083 | spec round cost  = draft 787618 us/47, verify 2419181 us/42, plain 224950 us/6, process 149630 us, save 0 us, restore 0 us\r",
+        "2.12.894.609 I slot print_timing: id  0 | task 1134 | draft acceptance = 0.65974 (  254 accepted /   385 generated), mean len =  2.29\r",
+        "2.12.894.611 I slot print_timing: id  0 | task 1134 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 254 accepted)\r",
+        "2.12.894.616 I slot print_timing: id  0 | task 1134 | spec round cost  = draft 3924396 us/256, verify 10885401 us/197, plain 2196527 us/60, process 780912 us, save 0 us, restore 0 us\r",
+        "2.29.266.478 I slot print_timing: id  0 | task 1394 | draft acceptance = 0.80523 (  339 accepted /   421 generated), mean len =  3.08\r",
+        "2.29.266.479 I slot print_timing: id  0 | task 1394 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 339 accepted)\r",
+        "2.29.266.480 I slot print_timing: id  0 | task 1394 | spec round cost  = draft 3259137 us/171, verify 9748179 us/163, plain 338315 us/9, process 620526 us, save 0 us, restore 0 us\r",
+        "2.43.330.276 I slot print_timing: id  0 | task 1569 | draft acceptance = 0.80759 (  298 accepted /   369 generated), mean len =  3.19\r",
+        "2.43.330.276 I slot print_timing: id  0 | task 1569 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 298 accepted)\r",
+        "2.43.330.279 I slot print_timing: id  0 | task 1569 | spec round cost  = draft 2775714 us/147, verify 8243527 us/136, plain 417582 us/11, process 519226 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-09T04:57:13.6125908Z"
+    },
+    {
+      "arm": "D-a1-g",
+      "args": [
+        "-m",
+        "D:\\ArifiLabs\\models\\hf\\ornith-ai\\Ornith-1.5-35B-A3B-GGUF\\Ornith-1.5-35B-Q4_K_M.gguf",
+        "-ngl",
+        "999",
+        "-np",
+        "1",
+        "-fa",
+        "on",
+        "-c",
+        "4096",
+        "-ub",
+        "512",
+        "-b",
+        "2048",
+        "-lm",
+        "dio",
+        "--lazy-mode",
+        "on",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "-md",
+        "D:\\ArifiLabs\\models\\hf\\jzinno\\Ornith-1.5-35B-A3B-DFlash2\\Ornith-1.5-35B-A3B-DFlash2-BF16.gguf",
+        "-ngld",
+        "999",
+        "--spec-type",
+        "draft-dflash",
+        "--spec-draft-n-max",
+        "2",
+        "--dflash-defer-injection",
+        "0"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 3787444224.0,
+      "started_utc": "2026-10-09T04:57:46.0894561Z",
+      "healthy": true,
+      "peak_ws_bytes": 1455542272,
+      "peak_private_bytes": 27744473088,
+      "min_avail_bytes": 9996558336,
+      "avail_before_bytes": 11640672256,
+      "requests": [
+        {
+          "tag": "pg-orn-10090030-D-a1-g-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=36.5 ttft_ms=362.6 gen_n=8 decode_tps=24.83 draft=4/5"
+        },
+        {
+          "tag": "pg-orn-10090030-D-a1-g-r1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=59.18 ttft_ms=226.9 gen_n=128 decode_tps=32.04 draft=74/105"
+        },
+        {
+          "tag": "pg-orn-10090030-D-a1-g-r1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=376.84 ttft_ms=1630.1 gen_n=128 decode_tps=33.41 draft=77/99"
+        },
+        {
+          "tag": "pg-orn-10090030-D-a1-g-r2-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=59.7 ttft_ms=247.3 gen_n=128 decode_tps=31.95 draft=74/105"
+        },
+        {
+          "tag": "pg-orn-10090030-D-a1-g-r2-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=420.17 ttft_ms=1483.7 gen_n=128 decode_tps=33.47 draft=77/99"
+        },
+        {
+          "tag": "pg-orn-10090030-D-a1-g-t-chat",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=48 prefill_tps=123.2 ttft_ms=427.7 gen_n=512 decode_tps=24.29 draft=231/559 answer=False reasoning_chars=1953 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-D-a1-g-t-code",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=75 prefill_tps=170.21 ttft_ms=488.3 gen_n=512 decode_tps=35.66 draft=321/380 answer=False reasoning_chars=1934 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-D-a1-g-t-json",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=87 prefill_tps=192.76 ttft_ms=509.9 gen_n=489 decode_tps=35.01 draft=305/370 answer=True reasoning_chars=685 finish=stop"
+        },
+        {
+          "tag": "pg-orn-10090030-D-a1-g-t-reason",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=119 prefill_tps=241.2 ttft_ms=537.4 gen_n=768 decode_tps=35.28 draft=481/572 answer=False reasoning_chars=1768 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-D-a1-g-s-short",
+          "exit": 0,
+          "summary": "path=completion regime=sampled prompt_n=12 prefill_tps=59.65 ttft_ms=246.9 gen_n=128 decode_tps=37.55 draft=82/89"
+        },
+        {
+          "tag": "pg-orn-10090030-D-a1-g-s-chat",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=48 prefill_tps=136.19 ttft_ms=392.6 gen_n=512 decode_tps=24.79 draft=238/546 answer=False reasoning_chars=1988 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-D-a1-g-s-code",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=75 prefill_tps=170.84 ttft_ms=480.6 gen_n=512 decode_tps=35.52 draft=322/376 answer=False reasoning_chars=1837 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-D-a1-g-s-json",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=87 prefill_tps=180.76 ttft_ms=536.8 gen_n=512 decode_tps=35.57 draft=321/380 answer=True reasoning_chars=1209 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-D-a1-g-s-reason",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=119 prefill_tps=240.01 ttft_ms=533.1 gen_n=768 decode_tps=34.86 draft=478/577 answer=False reasoning_chars=1651 finish=length"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 26220,
+      "load_s": 8.6,
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.00.164.242 I srv  server_prefl: preselected DFlash2 shared driver (block_size=16, draft-max=2)\r",
+        "0.00.170.593 I srv  server_prepa: [spec] auto-selected Vulkan0 as the primary draft device\r",
+        "0.01.791.810 E llama_init_from_model: failed to initialize the context: dflash requires ctx_other to be set (this warning is normal during memory fitting)\r",
+        "0.01.848.447 W operator(): failed to measure the memory of the extra model, fitting without it: failed to create llama_context from model\r",
+        "0.07.242.661 I common_speculative_init_result: loading draft model 'D:\\ArifiLabs\\models\\hf\\jzinno\\Ornith-1.5-35B-A3B-DFlash2\\Ornith-1.5-35B-A3B-DFlash2-BF16.gguf'\r",
+        "0.07.873.090 I common_speculative_impl_draft_dflash: adding speculative implementation 'draft-dflash'\r",
+        "0.07.873.100 I common_speculative_impl_draft_dflash: - n_max=2, n_min=0, p_min=0.00\r",
+        "0.07.873.101 I common_speculative_impl_draft_dflash: - block_size=16, mask_token_id=248077, n_extract=8, sample_from_anchor=true\r",
+        "0.07.873.104 I common_speculative_impl_draft_dflash: DFlash2 depth mode: requested depth\r",
+        "0.07.873.108 I common_speculative_impl_draft_dflash: DFlash KV injection: legacy (encode + decode, default)\r",
+        "0.07.873.210 I common_speculative_impl_draft_dflash: DFlash2 draft attention: non-causal\r",
+        "0.09.383.464 I slot print_timing: id  0 | task 0 | draft acceptance = 0.80000 (    4 accepted /     5 generated), mean len =  2.33\r",
+        "0.09.383.465 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 4 accepted)\r",
+        "0.09.383.467 I slot print_timing: id  0 | task 0 | spec round cost  = draft 83284 us/3, verify 185580 us/3, plain 0 us/0, process 10588 us, save 0 us, restore 0 us\r",
+        "0.14.974.912 I slot print_timing: id  0 | task 6 | draft acceptance = 0.70476 (   74 accepted /   105 generated), mean len =  2.40\r",
+        "0.14.974.913 I slot print_timing: id  0 | task 6 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 74 accepted)\r",
+        "0.14.974.915 I slot print_timing: id  0 | task 6 | spec round cost  = draft 953034 us/53, verify 2723721 us/53, plain 0 us/0, process 240939 us, save 0 us, restore 0 us\r",
+        "0.22.265.611 I slot print_timing: id  0 | task 62 | draft acceptance = 0.77778 (   77 accepted /    99 generated), mean len =  2.54\r",
+        "0.22.265.612 I slot print_timing: id  0 | task 62 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 77 accepted)\r",
+        "0.22.265.614 I slot print_timing: id  0 | task 62 | spec round cost  = draft 955032 us/50, verify 2599589 us/50, plain 0 us/0, process 200456 us, save 0 us, restore 0 us\r",
+        "0.27.104.884 I slot print_timing: id  0 | task 116 | draft acceptance = 0.70476 (   74 accepted /   105 generated), mean len =  2.40\r",
+        "0.27.104.885 I slot print_timing: id  0 | task 116 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 74 accepted)\r",
+        "0.27.104.887 I slot print_timing: id  0 | task 116 | spec round cost  = draft 958230 us/53, verify 2721393 us/53, plain 0 us/0, process 245434 us, save 0 us, restore 0 us\r",
+        "0.34.209.365 I slot print_timing: id  0 | task 172 | draft acceptance = 0.77778 (   77 accepted /    99 generated), mean len =  2.54\r",
+        "0.34.209.366 I slot print_timing: id  0 | task 172 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 77 accepted)\r",
+        "0.34.209.367 I slot print_timing: id  0 | task 172 | spec round cost  = draft 952027 us/50, verify 2606457 us/50, plain 0 us/0, process 190870 us, save 0 us, restore 0 us\r",
+        "0.56.438.246 I slot print_timing: id  0 | task 226 | draft acceptance = 0.41324 (  231 accepted /   559 generated), mean len =  1.82\r",
+        "0.56.438.247 I slot print_timing: id  0 | task 226 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 231 accepted)\r",
+        "0.56.438.249 I slot print_timing: id  0 | task 226 | spec round cost  = draft 5126645 us/280, verify 14489747 us/280, plain 0 us/0, process 1198924 us, save 0 us, restore 0 us\r",
+        "1.11.945.516 I slot print_timing: id  0 | task 509 | draft acceptance = 0.84474 (  321 accepted /   380 generated), mean len =  2.69\r",
+        "1.11.945.517 I slot print_timing: id  0 | task 509 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 321 accepted)\r",
+        "1.11.945.519 I slot print_timing: id  0 | task 509 | spec round cost  = draft 3493166 us/190, verify 9840194 us/190, plain 0 us/0, process 815913 us, save 0 us, restore 0 us\r",
+        "1.27.656.704 I slot print_timing: id  0 | task 702 | draft acceptance = 0.82432 (  305 accepted /   370 generated), mean len =  2.65\r",
+        "1.27.656.705 I slot print_timing: id  0 | task 702 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 305 accepted)\r",
+        "1.27.656.707 I slot print_timing: id  0 | task 702 | spec round cost  = draft 3410439 us/185, verify 9597136 us/185, plain 0 us/0, process 759954 us, save 0 us, restore 0 us\r",
+        "1.51.577.535 I slot print_timing: id  0 | task 890 | draft acceptance = 0.84091 (  481 accepted /   572 generated), mean len =  2.68\r",
+        "1.51.577.536 I slot print_timing: id  0 | task 890 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 481 accepted)\r",
+        "1.51.577.538 I slot print_timing: id  0 | task 890 | spec round cost  = draft 5368932 us/286, verify 14875832 us/286, plain 0 us/0, process 1226479 us, save 0 us, restore 0 us\r",
+        "1.57.092.065 I slot print_timing: id  0 | task 1179 | draft acceptance = 0.92135 (   82 accepted /    89 generated), mean len =  2.82\r",
+        "1.57.092.065 I slot print_timing: id  0 | task 1179 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 82 accepted)\r"
+      ],
+      "finished_utc": "2026-10-09T05:01:05.1018122Z"
+    },
+    {
+      "arm": "D-b1-p",
+      "args": [
+        "-m",
+        "D:\\ArifiLabs\\models\\hf\\ornith-ai\\Ornith-1.5-35B-A3B-GGUF\\Ornith-1.5-35B-Q4_K_M.gguf",
+        "-ngl",
+        "999",
+        "-np",
+        "1",
+        "-fa",
+        "on",
+        "-c",
+        "4096",
+        "-ub",
+        "512",
+        "-b",
+        "2048",
+        "-lm",
+        "dio",
+        "--lazy-mode",
+        "on",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "-md",
+        "D:\\ArifiLabs\\models\\hf\\jzinno\\Ornith-1.5-35B-A3B-DFlash2\\Ornith-1.5-35B-A3B-DFlash2-BF16.gguf",
+        "-ngld",
+        "999",
+        "--spec-type",
+        "draft-dflash",
+        "--spec-draft-n-max",
+        "2",
+        "--dflash-defer-injection",
+        "0"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 3790217216.0,
+      "started_utc": "2026-10-09T05:01:37.5103980Z",
+      "healthy": true,
+      "peak_ws_bytes": 1455411200,
+      "peak_private_bytes": 27738218496,
+      "min_avail_bytes": 9968558080,
+      "avail_before_bytes": 11621601280,
+      "requests": [
+        {
+          "tag": "pg-orn-10090030-D-b1-p-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=35.02 ttft_ms=390.4 gen_n=8 decode_tps=24.25 draft=4/5"
+        },
+        {
+          "tag": "pg-orn-10090030-D-b1-p-r1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=58.1 ttft_ms=239.4 gen_n=128 decode_tps=32.0 draft=74/105"
+        },
+        {
+          "tag": "pg-orn-10090030-D-b1-p-r1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=369.29 ttft_ms=1662.6 gen_n=128 decode_tps=33.37 draft=77/99"
+        },
+        {
+          "tag": "pg-orn-10090030-D-b1-p-r2-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=57.63 ttft_ms=243.2 gen_n=128 decode_tps=31.95 draft=74/105"
+        },
+        {
+          "tag": "pg-orn-10090030-D-b1-p-r2-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=415.87 ttft_ms=1496.5 gen_n=128 decode_tps=33.49 draft=77/99"
+        },
+        {
+          "tag": "pg-orn-10090030-D-b1-p-t-chat",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=48 prefill_tps=119.63 ttft_ms=442.9 gen_n=512 decode_tps=24.23 draft=231/559 answer=False reasoning_chars=1953 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-D-b1-p-t-code",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=75 prefill_tps=166.84 ttft_ms=500.4 gen_n=512 decode_tps=35.5 draft=321/380 answer=False reasoning_chars=1934 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-D-b1-p-t-json",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=87 prefill_tps=190.37 ttft_ms=500.5 gen_n=489 decode_tps=34.94 draft=303/370 answer=True reasoning_chars=685 finish=stop"
+        },
+        {
+          "tag": "pg-orn-10090030-D-b1-p-t-reason",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=119 prefill_tps=238.75 ttft_ms=564.6 gen_n=768 decode_tps=35.16 draft=481/572 answer=False reasoning_chars=1768 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-D-b1-p-s-short",
+          "exit": 0,
+          "summary": "path=completion regime=sampled prompt_n=12 prefill_tps=58.91 ttft_ms=253.9 gen_n=128 decode_tps=37.38 draft=82/89"
+        },
+        {
+          "tag": "pg-orn-10090030-D-b1-p-s-chat",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=48 prefill_tps=134.79 ttft_ms=406.0 gen_n=512 decode_tps=24.72 draft=238/546 answer=False reasoning_chars=1988 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-D-b1-p-s-code",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=75 prefill_tps=161.98 ttft_ms=497.7 gen_n=512 decode_tps=35.38 draft=322/376 answer=False reasoning_chars=1837 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-D-b1-p-s-json",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=87 prefill_tps=176.78 ttft_ms=539.2 gen_n=512 decode_tps=35.38 draft=321/380 answer=True reasoning_chars=1209 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-D-b1-p-s-reason",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=119 prefill_tps=234.79 ttft_ms=552.7 gen_n=768 decode_tps=34.83 draft=478/577 answer=False reasoning_chars=1651 finish=length"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 22364,
+      "load_s": 8.6,
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.00.169.340 I srv  server_prefl: preselected DFlash2 shared driver (block_size=16, draft-max=2)\r",
+        "0.00.175.857 I srv  server_prepa: [spec] auto-selected Vulkan0 as the primary draft device\r",
+        "0.01.835.304 E llama_init_from_model: failed to initialize the context: dflash requires ctx_other to be set (this warning is normal during memory fitting)\r",
+        "0.01.890.007 W operator(): failed to measure the memory of the extra model, fitting without it: failed to create llama_context from model\r",
+        "0.07.248.271 I common_speculative_init_result: loading draft model 'D:\\ArifiLabs\\models\\hf\\jzinno\\Ornith-1.5-35B-A3B-DFlash2\\Ornith-1.5-35B-A3B-DFlash2-BF16.gguf'\r",
+        "0.07.853.472 I common_speculative_impl_draft_dflash: adding speculative implementation 'draft-dflash'\r",
+        "0.07.853.480 I common_speculative_impl_draft_dflash: - n_max=2, n_min=0, p_min=0.00\r",
+        "0.07.853.481 I common_speculative_impl_draft_dflash: - block_size=16, mask_token_id=248077, n_extract=8, sample_from_anchor=true\r",
+        "0.07.853.484 I common_speculative_impl_draft_dflash: DFlash2 depth mode: requested depth\r",
+        "0.07.853.487 I common_speculative_impl_draft_dflash: DFlash KV injection: legacy (encode + decode, default)\r",
+        "0.07.853.576 I common_speculative_impl_draft_dflash: DFlash2 draft attention: non-causal\r",
+        "0.09.422.306 I slot print_timing: id  0 | task 0 | draft acceptance = 0.80000 (    4 accepted /     5 generated), mean len =  2.33\r",
+        "0.09.422.307 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 4 accepted)\r",
+        "0.09.422.308 I slot print_timing: id  0 | task 0 | spec round cost  = draft 87281 us/3, verify 187973 us/3, plain 0 us/0, process 10962 us, save 0 us, restore 0 us\r",
+        "0.14.969.403 I slot print_timing: id  0 | task 6 | draft acceptance = 0.70476 (   74 accepted /   105 generated), mean len =  2.40\r",
+        "0.14.969.404 I slot print_timing: id  0 | task 6 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 74 accepted)\r",
+        "0.14.969.405 I slot print_timing: id  0 | task 6 | spec round cost  = draft 964404 us/53, verify 2731849 us/53, plain 0 us/0, process 227374 us, save 0 us, restore 0 us\r",
+        "0.22.279.930 I slot print_timing: id  0 | task 62 | draft acceptance = 0.77778 (   77 accepted /    99 generated), mean len =  2.54\r",
+        "0.22.279.931 I slot print_timing: id  0 | task 62 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 77 accepted)\r",
+        "0.22.279.933 I slot print_timing: id  0 | task 62 | spec round cost  = draft 966432 us/50, verify 2607912 us/50, plain 0 us/0, process 185180 us, save 0 us, restore 0 us\r",
+        "0.27.078.534 I slot print_timing: id  0 | task 116 | draft acceptance = 0.70476 (   74 accepted /   105 generated), mean len =  2.40\r",
+        "0.27.078.535 I slot print_timing: id  0 | task 116 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 74 accepted)\r",
+        "0.27.078.537 I slot print_timing: id  0 | task 116 | spec round cost  = draft 1001158 us/53, verify 2751111 us/53, plain 0 us/0, process 173013 us, save 0 us, restore 0 us\r",
+        "0.34.204.682 I slot print_timing: id  0 | task 172 | draft acceptance = 0.77778 (   77 accepted /    99 generated), mean len =  2.54\r",
+        "0.34.204.683 I slot print_timing: id  0 | task 172 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 77 accepted)\r",
+        "0.34.204.686 I slot print_timing: id  0 | task 172 | spec round cost  = draft 961061 us/50, verify 2601030 us/50, plain 0 us/0, process 184617 us, save 0 us, restore 0 us\r",
+        "0.56.501.322 I slot print_timing: id  0 | task 226 | draft acceptance = 0.41324 (  231 accepted /   559 generated), mean len =  1.82\r",
+        "0.56.501.323 I slot print_timing: id  0 | task 226 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 231 accepted)\r",
+        "0.56.501.326 I slot print_timing: id  0 | task 226 | spec round cost  = draft 5204640 us/280, verify 14493688 us/280, plain 0 us/0, process 1167113 us, save 0 us, restore 0 us\r",
+        "1.11.969.711 I slot print_timing: id  0 | task 509 | draft acceptance = 0.84474 (  321 accepted /   380 generated), mean len =  2.69\r",
+        "1.11.969.712 I slot print_timing: id  0 | task 509 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 321 accepted)\r",
+        "1.11.969.714 I slot print_timing: id  0 | task 509 | spec round cost  = draft 3544694 us/190, verify 9880121 us/190, plain 0 us/0, process 786236 us, save 0 us, restore 0 us\r",
+        "1.27.648.672 I slot print_timing: id  0 | task 702 | draft acceptance = 0.81892 (  303 accepted /   370 generated), mean len =  2.64\r",
+        "1.27.648.673 I slot print_timing: id  0 | task 702 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 303 accepted)\r",
+        "1.27.648.675 I slot print_timing: id  0 | task 702 | spec round cost  = draft 3449607 us/185, verify 9590938 us/185, plain 0 us/0, process 754695 us, save 0 us, restore 0 us\r",
+        "1.51.662.644 I slot print_timing: id  0 | task 890 | draft acceptance = 0.84091 (  481 accepted /   572 generated), mean len =  2.68\r",
+        "1.51.662.644 I slot print_timing: id  0 | task 890 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 481 accepted)\r",
+        "1.51.662.646 I slot print_timing: id  0 | task 890 | spec round cost  = draft 5447497 us/286, verify 14879231 us/286, plain 0 us/0, process 1216380 us, save 0 us, restore 0 us\r",
+        "1.57.067.922 I slot print_timing: id  0 | task 1179 | draft acceptance = 0.92135 (   82 accepted /    89 generated), mean len =  2.82\r",
+        "1.57.067.923 I slot print_timing: id  0 | task 1179 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 82 accepted)\r"
+      ],
+      "finished_utc": "2026-10-09T05:04:56.4945751Z"
+    },
+    {
+      "arm": "D-b2-p",
+      "args": [
+        "-m",
+        "D:\\ArifiLabs\\models\\hf\\ornith-ai\\Ornith-1.5-35B-A3B-GGUF\\Ornith-1.5-35B-Q4_K_M.gguf",
+        "-ngl",
+        "999",
+        "-np",
+        "1",
+        "-fa",
+        "on",
+        "-c",
+        "4096",
+        "-ub",
+        "512",
+        "-b",
+        "2048",
+        "-lm",
+        "dio",
+        "--lazy-mode",
+        "on",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "-md",
+        "D:\\ArifiLabs\\models\\hf\\jzinno\\Ornith-1.5-35B-A3B-DFlash2\\Ornith-1.5-35B-A3B-DFlash2-BF16.gguf",
+        "-ngld",
+        "999",
+        "--spec-type",
+        "draft-dflash",
+        "--spec-draft-n-max",
+        "2",
+        "--dflash-defer-injection",
+        "0"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 3791171584.0,
+      "started_utc": "2026-10-09T05:05:28.9497482Z",
+      "healthy": true,
+      "peak_ws_bytes": 1454964736,
+      "peak_private_bytes": 27755569152,
+      "min_avail_bytes": 9958588416,
+      "avail_before_bytes": 11684077568,
+      "requests": [
+        {
+          "tag": "pg-orn-10090030-D-b2-p-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=36.29 ttft_ms=359.8 gen_n=8 decode_tps=24.42 draft=4/5"
+        },
+        {
+          "tag": "pg-orn-10090030-D-b2-p-r1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=58.4 ttft_ms=237.1 gen_n=128 decode_tps=31.97 draft=74/105"
+        },
+        {
+          "tag": "pg-orn-10090030-D-b2-p-r1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=372.08 ttft_ms=1654.6 gen_n=128 decode_tps=33.48 draft=77/99"
+        },
+        {
+          "tag": "pg-orn-10090030-D-b2-p-r2-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=59.54 ttft_ms=248.4 gen_n=128 decode_tps=31.95 draft=74/105"
+        },
+        {
+          "tag": "pg-orn-10090030-D-b2-p-r2-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=413.84 ttft_ms=1506.0 gen_n=128 decode_tps=33.39 draft=77/99"
+        },
+        {
+          "tag": "pg-orn-10090030-D-b2-p-t-chat",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=48 prefill_tps=121.05 ttft_ms=441.8 gen_n=512 decode_tps=24.22 draft=231/559 answer=False reasoning_chars=1953 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-D-b2-p-t-code",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=75 prefill_tps=169.86 ttft_ms=502.3 gen_n=512 decode_tps=35.57 draft=321/380 answer=False reasoning_chars=1934 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-D-b2-p-t-json",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=87 prefill_tps=187.59 ttft_ms=510.9 gen_n=489 decode_tps=34.86 draft=303/370 answer=True reasoning_chars=685 finish=stop"
+        },
+        {
+          "tag": "pg-orn-10090030-D-b2-p-t-reason",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=119 prefill_tps=236.48 ttft_ms=563.7 gen_n=768 decode_tps=35.2 draft=481/572 answer=False reasoning_chars=1768 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-D-b2-p-s-short",
+          "exit": 0,
+          "summary": "path=completion regime=sampled prompt_n=12 prefill_tps=59.12 ttft_ms=250.6 gen_n=128 decode_tps=37.37 draft=82/89"
+        },
+        {
+          "tag": "pg-orn-10090030-D-b2-p-s-chat",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=48 prefill_tps=130.9 ttft_ms=415.3 gen_n=512 decode_tps=24.74 draft=238/546 answer=False reasoning_chars=1988 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-D-b2-p-s-code",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=75 prefill_tps=168.04 ttft_ms=505.0 gen_n=512 decode_tps=35.37 draft=322/376 answer=False reasoning_chars=1837 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-D-b2-p-s-json",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=87 prefill_tps=177.92 ttft_ms=534.1 gen_n=512 decode_tps=35.51 draft=321/380 answer=True reasoning_chars=1209 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-D-b2-p-s-reason",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=119 prefill_tps=234.54 ttft_ms=558.2 gen_n=768 decode_tps=34.8 draft=478/577 answer=False reasoning_chars=1651 finish=length"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 27532,
+      "load_s": 8.6,
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.00.217.264 I srv  server_prefl: preselected DFlash2 shared driver (block_size=16, draft-max=2)\r",
+        "0.00.223.301 I srv  server_prepa: [spec] auto-selected Vulkan0 as the primary draft device\r",
+        "0.01.825.486 E llama_init_from_model: failed to initialize the context: dflash requires ctx_other to be set (this warning is normal during memory fitting)\r",
+        "0.01.878.602 W operator(): failed to measure the memory of the extra model, fitting without it: failed to create llama_context from model\r",
+        "0.07.267.738 I common_speculative_init_result: loading draft model 'D:\\ArifiLabs\\models\\hf\\jzinno\\Ornith-1.5-35B-A3B-DFlash2\\Ornith-1.5-35B-A3B-DFlash2-BF16.gguf'\r",
+        "0.07.862.400 I common_speculative_impl_draft_dflash: adding speculative implementation 'draft-dflash'\r",
+        "0.07.862.408 I common_speculative_impl_draft_dflash: - n_max=2, n_min=0, p_min=0.00\r",
+        "0.07.862.409 I common_speculative_impl_draft_dflash: - block_size=16, mask_token_id=248077, n_extract=8, sample_from_anchor=true\r",
+        "0.07.862.412 I common_speculative_impl_draft_dflash: DFlash2 depth mode: requested depth\r",
+        "0.07.862.415 I common_speculative_impl_draft_dflash: DFlash KV injection: legacy (encode + decode, default)\r",
+        "0.07.862.506 I common_speculative_impl_draft_dflash: DFlash2 draft attention: non-causal\r",
+        "0.09.393.061 I slot print_timing: id  0 | task 0 | draft acceptance = 0.80000 (    4 accepted /     5 generated), mean len =  2.33\r",
+        "0.09.393.062 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 4 accepted)\r",
+        "0.09.393.064 I slot print_timing: id  0 | task 0 | spec round cost  = draft 87443 us/3, verify 185956 us/3, plain 0 us/0, process 10838 us, save 0 us, restore 0 us\r",
+        "0.14.969.973 I slot print_timing: id  0 | task 6 | draft acceptance = 0.70476 (   74 accepted /   105 generated), mean len =  2.40\r",
+        "0.14.969.975 I slot print_timing: id  0 | task 6 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 74 accepted)\r",
+        "0.14.969.977 I slot print_timing: id  0 | task 6 | spec round cost  = draft 967440 us/53, verify 2718988 us/53, plain 0 us/0, process 238834 us, save 0 us, restore 0 us\r",
+        "0.22.273.424 I slot print_timing: id  0 | task 62 | draft acceptance = 0.77778 (   77 accepted /    99 generated), mean len =  2.54\r",
+        "0.22.273.425 I slot print_timing: id  0 | task 62 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 77 accepted)\r",
+        "0.22.273.426 I slot print_timing: id  0 | task 62 | spec round cost  = draft 958371 us/50, verify 2598102 us/50, plain 0 us/0, process 191962 us, save 0 us, restore 0 us\r",
+        "0.27.107.032 I slot print_timing: id  0 | task 116 | draft acceptance = 0.70476 (   74 accepted /   105 generated), mean len =  2.40\r",
+        "0.27.107.033 I slot print_timing: id  0 | task 116 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 74 accepted)\r",
+        "0.27.107.035 I slot print_timing: id  0 | task 116 | spec round cost  = draft 967922 us/53, verify 2731701 us/53, plain 0 us/0, process 228258 us, save 0 us, restore 0 us\r",
+        "0.34.249.619 I slot print_timing: id  0 | task 172 | draft acceptance = 0.77778 (   77 accepted /    99 generated), mean len =  2.54\r",
+        "0.34.249.620 I slot print_timing: id  0 | task 172 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 77 accepted)\r",
+        "0.34.249.621 I slot print_timing: id  0 | task 172 | spec round cost  = draft 967772 us/50, verify 2608878 us/50, plain 0 us/0, process 182260 us, save 0 us, restore 0 us\r",
+        "0.56.524.238 I slot print_timing: id  0 | task 226 | draft acceptance = 0.41324 (  231 accepted /   559 generated), mean len =  1.82\r",
+        "0.56.524.239 I slot print_timing: id  0 | task 226 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 231 accepted)\r",
+        "0.56.524.241 I slot print_timing: id  0 | task 226 | spec round cost  = draft 5201842 us/280, verify 14494644 us/280, plain 0 us/0, process 1176862 us, save 0 us, restore 0 us\r",
+        "1.12.019.082 I slot print_timing: id  0 | task 509 | draft acceptance = 0.84474 (  321 accepted /   380 generated), mean len =  2.69\r",
+        "1.12.019.083 I slot print_timing: id  0 | task 509 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 321 accepted)\r",
+        "1.12.019.085 I slot print_timing: id  0 | task 509 | spec round cost  = draft 3551891 us/190, verify 9859979 us/190, plain 0 us/0, process 773001 us, save 0 us, restore 0 us\r",
+        "1.27.754.891 I slot print_timing: id  0 | task 702 | draft acceptance = 0.81892 (  303 accepted /   370 generated), mean len =  2.64\r",
+        "1.27.754.892 I slot print_timing: id  0 | task 702 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 303 accepted)\r",
+        "1.27.754.894 I slot print_timing: id  0 | task 702 | spec round cost  = draft 3458363 us/185, verify 9608217 us/185, plain 0 us/0, process 761012 us, save 0 us, restore 0 us\r",
+        "1.51.695.595 I slot print_timing: id  0 | task 890 | draft acceptance = 0.84091 (  481 accepted /   572 generated), mean len =  2.68\r",
+        "1.51.695.596 I slot print_timing: id  0 | task 890 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 481 accepted)\r",
+        "1.51.695.598 I slot print_timing: id  0 | task 890 | spec round cost  = draft 5426017 us/286, verify 14885093 us/286, plain 0 us/0, process 1210179 us, save 0 us, restore 0 us\r",
+        "1.57.117.043 I slot print_timing: id  0 | task 1179 | draft acceptance = 0.92135 (   82 accepted /    89 generated), mean len =  2.82\r",
+        "1.57.117.044 I slot print_timing: id  0 | task 1179 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 82 accepted)\r"
+      ],
+      "finished_utc": "2026-10-09T05:08:47.9713768Z"
+    },
+    {
+      "arm": "D-a2-g",
+      "args": [
+        "-m",
+        "D:\\ArifiLabs\\models\\hf\\ornith-ai\\Ornith-1.5-35B-A3B-GGUF\\Ornith-1.5-35B-Q4_K_M.gguf",
+        "-ngl",
+        "999",
+        "-np",
+        "1",
+        "-fa",
+        "on",
+        "-c",
+        "4096",
+        "-ub",
+        "512",
+        "-b",
+        "2048",
+        "-lm",
+        "dio",
+        "--lazy-mode",
+        "on",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "-md",
+        "D:\\ArifiLabs\\models\\hf\\jzinno\\Ornith-1.5-35B-A3B-DFlash2\\Ornith-1.5-35B-A3B-DFlash2-BF16.gguf",
+        "-ngld",
+        "999",
+        "--spec-type",
+        "draft-dflash",
+        "--spec-draft-n-max",
+        "2",
+        "--dflash-defer-injection",
+        "0"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 3794001920.0,
+      "started_utc": "2026-10-09T05:09:20.3608683Z",
+      "healthy": true,
+      "peak_ws_bytes": 1455271936,
+      "peak_private_bytes": 27733553152,
+      "min_avail_bytes": 9888485376,
+      "avail_before_bytes": 11541090304,
+      "requests": [
+        {
+          "tag": "pg-orn-10090030-D-a2-g-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=36.6 ttft_ms=365.5 gen_n=8 decode_tps=24.28 draft=4/5"
+        },
+        {
+          "tag": "pg-orn-10090030-D-a2-g-r1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=58.38 ttft_ms=233.2 gen_n=128 decode_tps=31.88 draft=74/105"
+        },
+        {
+          "tag": "pg-orn-10090030-D-a2-g-r1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=374.2 ttft_ms=1642.6 gen_n=128 decode_tps=33.47 draft=77/99"
+        },
+        {
+          "tag": "pg-orn-10090030-D-a2-g-r2-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=59.51 ttft_ms=242.8 gen_n=128 decode_tps=31.92 draft=74/105"
+        },
+        {
+          "tag": "pg-orn-10090030-D-a2-g-r2-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=417.32 ttft_ms=1496.1 gen_n=128 decode_tps=33.33 draft=77/99"
+        },
+        {
+          "tag": "pg-orn-10090030-D-a2-g-t-chat",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=48 prefill_tps=121.43 ttft_ms=449.3 gen_n=512 decode_tps=24.18 draft=231/559 answer=False reasoning_chars=1953 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-D-a2-g-t-code",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=75 prefill_tps=169.7 ttft_ms=493.5 gen_n=512 decode_tps=35.51 draft=321/380 answer=False reasoning_chars=1934 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-D-a2-g-t-json",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=87 prefill_tps=190.68 ttft_ms=511.4 gen_n=489 decode_tps=34.88 draft=305/370 answer=True reasoning_chars=685 finish=stop"
+        },
+        {
+          "tag": "pg-orn-10090030-D-a2-g-t-reason",
+          "exit": 0,
+          "summary": "path=chat regime=greedy prompt_n=119 prefill_tps=241.73 ttft_ms=540.9 gen_n=768 decode_tps=35.44 draft=481/572 answer=False reasoning_chars=1768 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-D-a2-g-s-short",
+          "exit": 0,
+          "summary": "path=completion regime=sampled prompt_n=12 prefill_tps=60.24 ttft_ms=238.6 gen_n=128 decode_tps=37.73 draft=82/89"
+        },
+        {
+          "tag": "pg-orn-10090030-D-a2-g-s-chat",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=48 prefill_tps=135.47 ttft_ms=412.8 gen_n=512 decode_tps=24.9 draft=238/546 answer=False reasoning_chars=1988 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-D-a2-g-s-code",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=75 prefill_tps=169.62 ttft_ms=488.7 gen_n=512 decode_tps=35.62 draft=322/376 answer=False reasoning_chars=1837 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-D-a2-g-s-json",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=87 prefill_tps=180.09 ttft_ms=530.0 gen_n=512 decode_tps=35.57 draft=321/380 answer=True reasoning_chars=1209 finish=length"
+        },
+        {
+          "tag": "pg-orn-10090030-D-a2-g-s-reason",
+          "exit": 0,
+          "summary": "path=chat regime=sampled prompt_n=119 prefill_tps=236.09 ttft_ms=550.2 gen_n=768 decode_tps=34.81 draft=478/577 answer=False reasoning_chars=1651 finish=length"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 27836,
+      "load_s": 8.6,
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.00.206.443 I srv  server_prefl: preselected DFlash2 shared driver (block_size=16, draft-max=2)\r",
+        "0.00.212.440 I srv  server_prepa: [spec] auto-selected Vulkan0 as the primary draft device\r",
+        "0.01.857.039 E llama_init_from_model: failed to initialize the context: dflash requires ctx_other to be set (this warning is normal during memory fitting)\r",
+        "0.01.909.607 W operator(): failed to measure the memory of the extra model, fitting without it: failed to create llama_context from model\r",
+        "0.07.234.280 I common_speculative_init_result: loading draft model 'D:\\ArifiLabs\\models\\hf\\jzinno\\Ornith-1.5-35B-A3B-DFlash2\\Ornith-1.5-35B-A3B-DFlash2-BF16.gguf'\r",
+        "0.07.842.650 I common_speculative_impl_draft_dflash: adding speculative implementation 'draft-dflash'\r",
+        "0.07.842.660 I common_speculative_impl_draft_dflash: - n_max=2, n_min=0, p_min=0.00\r",
+        "0.07.842.661 I common_speculative_impl_draft_dflash: - block_size=16, mask_token_id=248077, n_extract=8, sample_from_anchor=true\r",
+        "0.07.842.663 I common_speculative_impl_draft_dflash: DFlash2 depth mode: requested depth\r",
+        "0.07.842.667 I common_speculative_impl_draft_dflash: DFlash KV injection: legacy (encode + decode, default)\r",
+        "0.07.842.750 I common_speculative_impl_draft_dflash: DFlash2 draft attention: non-causal\r",
+        "0.09.371.567 I slot print_timing: id  0 | task 0 | draft acceptance = 0.80000 (    4 accepted /     5 generated), mean len =  2.33\r",
+        "0.09.371.569 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 4 accepted)\r",
+        "0.09.371.570 I slot print_timing: id  0 | task 0 | spec round cost  = draft 88445 us/3, verify 185736 us/3, plain 0 us/0, process 11472 us, save 0 us, restore 0 us\r",
+        "0.14.974.522 I slot print_timing: id  0 | task 6 | draft acceptance = 0.70476 (   74 accepted /   105 generated), mean len =  2.40\r",
+        "0.14.974.523 I slot print_timing: id  0 | task 6 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 74 accepted)\r",
+        "0.14.974.525 I slot print_timing: id  0 | task 6 | spec round cost  = draft 967194 us/53, verify 2731680 us/53, plain 0 us/0, process 238654 us, save 0 us, restore 0 us\r",
+        "0.22.263.919 I slot print_timing: id  0 | task 62 | draft acceptance = 0.77778 (   77 accepted /    99 generated), mean len =  2.54\r",
+        "0.22.263.920 I slot print_timing: id  0 | task 62 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 77 accepted)\r",
+        "0.22.263.922 I slot print_timing: id  0 | task 62 | spec round cost  = draft 944701 us/50, verify 2595578 us/50, plain 0 us/0, process 208763 us, save 0 us, restore 0 us\r",
+        "0.27.067.505 I slot print_timing: id  0 | task 116 | draft acceptance = 0.70476 (   74 accepted /   105 generated), mean len =  2.40\r",
+        "0.27.067.506 I slot print_timing: id  0 | task 116 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 74 accepted)\r",
+        "0.27.067.508 I slot print_timing: id  0 | task 116 | spec round cost  = draft 959518 us/53, verify 2725189 us/53, plain 0 us/0, process 244123 us, save 0 us, restore 0 us\r",
+        "0.34.181.789 I slot print_timing: id  0 | task 172 | draft acceptance = 0.77778 (   77 accepted /    99 generated), mean len =  2.54\r",
+        "0.34.181.790 I slot print_timing: id  0 | task 172 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 77 accepted)\r",
+        "0.34.181.792 I slot print_timing: id  0 | task 172 | spec round cost  = draft 948172 us/50, verify 2604638 us/50, plain 0 us/0, process 211609 us, save 0 us, restore 0 us\r",
+        "0.56.513.398 I slot print_timing: id  0 | task 226 | draft acceptance = 0.41324 (  231 accepted /   559 generated), mean len =  1.82\r",
+        "0.56.513.399 I slot print_timing: id  0 | task 226 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 231 accepted)\r",
+        "0.56.513.400 I slot print_timing: id  0 | task 226 | spec round cost  = draft 5149960 us/280, verify 14505642 us/280, plain 0 us/0, process 1248429 us, save 0 us, restore 0 us\r",
+        "1.11.913.853 I slot print_timing: id  0 | task 509 | draft acceptance = 0.84474 (  321 accepted /   380 generated), mean len =  2.69\r",
+        "1.11.913.854 I slot print_timing: id  0 | task 509 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 321 accepted)\r",
+        "1.11.913.855 I slot print_timing: id  0 | task 509 | spec round cost  = draft 3515706 us/190, verify 9852150 us/190, plain 0 us/0, process 836557 us, save 0 us, restore 0 us\r",
+        "1.27.632.659 I slot print_timing: id  0 | task 702 | draft acceptance = 0.82432 (  305 accepted /   370 generated), mean len =  2.65\r",
+        "1.27.632.660 I slot print_timing: id  0 | task 702 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 305 accepted)\r",
+        "1.27.632.662 I slot print_timing: id  0 | task 702 | spec round cost  = draft 3426906 us/185, verify 9594036 us/185, plain 0 us/0, process 795023 us, save 0 us, restore 0 us\r",
+        "1.51.411.316 I slot print_timing: id  0 | task 890 | draft acceptance = 0.84091 (  481 accepted /   572 generated), mean len =  2.68\r",
+        "1.51.411.317 I slot print_timing: id  0 | task 890 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 481 accepted)\r",
+        "1.51.411.319 I slot print_timing: id  0 | task 890 | spec round cost  = draft 5355577 us/286, verify 14889440 us/286, plain 0 us/0, process 1130147 us, save 0 us, restore 0 us\r",
+        "1.56.998.172 I slot print_timing: id  0 | task 1179 | draft acceptance = 0.92135 (   82 accepted /    89 generated), mean len =  2.82\r",
+        "1.56.998.173 I slot print_timing: id  0 | task 1179 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 82 accepted)\r"
+      ],
+      "finished_utc": "2026-10-09T05:12:39.3444624Z"
+    },
+    {
+      "arm": "XM-a1-g",
+      "args": [
+        "-m",
+        "D:\\ArifiLabs\\models\\hf\\ornith-ai\\Ornith-1.5-35B-A3B-GGUF\\Ornith-1.5-35B-Q4_K_M.gguf",
+        "-ngl",
+        "999",
+        "-np",
+        "1",
+        "-fa",
+        "on",
+        "-c",
+        "4096",
+        "-ub",
+        "512",
+        "-b",
+        "2048",
+        "-lm",
+        "dio",
+        "--lazy-mode",
+        "on",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "--spec-type",
+        "draft-mtp",
+        "--spec-draft-n-max",
+        "3",
+        "--spec-draft-p-min",
+        "0.5"
+      ],
+      "env": {
+        "GGML_VK_PERF_LOGGER": "1"
+      },
+      "cap_bytes": 0,
+      "nonpaged_before": 3796164608.0,
+      "started_utc": "2026-10-09T05:13:11.8378873Z",
+      "healthy": true,
+      "peak_ws_bytes": 768782336,
+      "peak_private_bytes": 24470650880,
+      "min_avail_bytes": 10594979840,
+      "avail_before_bytes": 11510640640,
+      "requests": [
+        {
+          "tag": "pg-orn-10090030-XM-a1-g-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=33.46 ttft_ms=397.1 gen_n=8 decode_tps=13.27 draft=4/5"
+        },
+        {
+          "tag": "pg-orn-10090030-XM-a1-g-r1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=39.38 ttft_ms=337.4 gen_n=128 decode_tps=16.27 draft=79/90"
+        },
+        {
+          "tag": "pg-orn-10090030-XM-a1-g-r1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=367.39 ttft_ms=1660.0 gen_n=128 decode_tps=16.06 draft=78/88"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 26344,
+      "load_s": 7.6,
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.07.431.705 I common_speculative_init_result: creating MTP draft context against the target model 'D:\\ArifiLabs\\models\\hf\\ornith-ai\\Ornith-1.5-35B-A3B-GGUF\\Ornith-1.5-35B-Q4_K_M.gguf'\r",
+        "0.08.630.158 I slot print_timing: id  0 | task 0 | draft acceptance = 0.80000 (    4 accepted /     5 generated), mean len =  2.33\r",
+        "0.08.630.159 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 4 accepted)\r",
+        "0.08.630.161 I slot print_timing: id  0 | task 0 | spec round cost  = draft 223723 us/3, verify 250280 us/3, plain 0 us/0, process 51295 us, save 0 us, restore 0 us\r",
+        "0.17.882.499 I slot print_timing: id  0 | task 6 | draft acceptance = 0.87778 (   79 accepted /    90 generated), mean len =  2.80\r",
+        "0.17.882.500 I slot print_timing: id  0 | task 6 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 79 accepted)\r",
+        "0.17.882.501 I slot print_timing: id  0 | task 6 | spec round cost  = draft 2926735 us/48, verify 3747039 us/44, plain 303793 us/4, process 791383 us, save 0 us, restore 0 us\r",
+        "0.29.355.721 I slot print_timing: id  0 | task 57 | draft acceptance = 0.88636 (   78 accepted /    88 generated), mean len =  2.86\r",
+        "0.29.355.722 I slot print_timing: id  0 | task 57 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 78 accepted)\r",
+        "0.29.355.724 I slot print_timing: id  0 | task 57 | spec round cost  = draft 2971092 us/49, verify 3646203 us/42, plain 444115 us/7, process 808767 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-09T05:13:44.7379910Z"
+    },
+    {
+      "arm": "XM-b1-p",
+      "args": [
+        "-m",
+        "D:\\ArifiLabs\\models\\hf\\ornith-ai\\Ornith-1.5-35B-A3B-GGUF\\Ornith-1.5-35B-Q4_K_M.gguf",
+        "-ngl",
+        "999",
+        "-np",
+        "1",
+        "-fa",
+        "on",
+        "-c",
+        "4096",
+        "-ub",
+        "512",
+        "-b",
+        "2048",
+        "-lm",
+        "dio",
+        "--lazy-mode",
+        "on",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "--spec-type",
+        "draft-mtp",
+        "--spec-draft-n-max",
+        "3",
+        "--spec-draft-p-min",
+        "0.5"
+      ],
+      "env": {
+        "GGML_VK_PERF_LOGGER": "1"
+      },
+      "cap_bytes": 0,
+      "nonpaged_before": 3796987904.0,
+      "started_utc": "2026-10-09T05:14:17.2021195Z",
+      "healthy": true,
+      "peak_ws_bytes": 768770048,
+      "peak_private_bytes": 24473817088,
+      "min_avail_bytes": 10589265920,
+      "avail_before_bytes": 11509882880,
+      "requests": [
+        {
+          "tag": "pg-orn-10090030-XM-b1-p-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=31.59 ttft_ms=400.8 gen_n=8 decode_tps=13.6 draft=4/5"
+        },
+        {
+          "tag": "pg-orn-10090030-XM-b1-p-r1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=39.58 ttft_ms=343.8 gen_n=128 decode_tps=16.08 draft=79/90"
+        },
+        {
+          "tag": "pg-orn-10090030-XM-b1-p-r1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=369.0 ttft_ms=1664.2 gen_n=128 decode_tps=16.0 draft=78/88"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 20112,
+      "load_s": 7.6,
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.07.432.102 I common_speculative_init_result: creating MTP draft context against the target model 'D:\\ArifiLabs\\models\\hf\\ornith-ai\\Ornith-1.5-35B-A3B-GGUF\\Ornith-1.5-35B-Q4_K_M.gguf'\r",
+        "0.08.636.389 I slot print_timing: id  0 | task 0 | draft acceptance = 0.80000 (    4 accepted /     5 generated), mean len =  2.33\r",
+        "0.08.636.390 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 4 accepted)\r",
+        "0.08.636.392 I slot print_timing: id  0 | task 0 | spec round cost  = draft 218800 us/3, verify 246435 us/3, plain 0 us/0, process 47252 us, save 0 us, restore 0 us\r",
+        "0.17.988.420 I slot print_timing: id  0 | task 6 | draft acceptance = 0.87778 (   79 accepted /    90 generated), mean len =  2.80\r",
+        "0.17.988.427 I slot print_timing: id  0 | task 6 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 79 accepted)\r",
+        "0.17.988.429 I slot print_timing: id  0 | task 6 | spec round cost  = draft 2940393 us/48, verify 3811129 us/44, plain 307454 us/4, process 801420 us, save 0 us, restore 0 us\r",
+        "0.29.420.980 I slot print_timing: id  0 | task 57 | draft acceptance = 0.88636 (   78 accepted /    88 generated), mean len =  2.86\r",
+        "0.29.420.981 I slot print_timing: id  0 | task 57 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 78 accepted)\r",
+        "0.29.420.982 I slot print_timing: id  0 | task 57 | spec round cost  = draft 2992461 us/49, verify 3643592 us/42, plain 444532 us/7, process 817822 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-09T05:14:50.1396004Z"
+    }
+  ],
+  "lite": false,
+  "build_sha": "a14473f76813a2a4b975de2a6da5b80536540b09",
+  "integ_head": "7156c616079285b495b03e3ef03d7c4b554ab182",
+  "model": "orn",
+  "comparator": "g",
+  "slots": [
+    {
+      "tag": "P-a1",
+      "mode": "P",
+      "side": "a",
+      "bin": "g",
+      "arm": "P-a1-g",
+      "result": "ok",
+      "load_s": 7.6,
+      "min_avail_bytes": 11553832960
+    },
+    {
+      "tag": "P-b1",
+      "mode": "P",
+      "side": "b",
+      "bin": "p",
+      "arm": "P-b1-p",
+      "result": "ok",
+      "load_s": 7.6,
+      "min_avail_bytes": 11377946624
+    },
+    {
+      "tag": "P-b2",
+      "mode": "P",
+      "side": "b",
+      "bin": "p",
+      "arm": "P-b2-p",
+      "result": "ok",
+      "load_s": 7.6,
+      "min_avail_bytes": 11460825088
+    },
+    {
+      "tag": "P-a2",
+      "mode": "P",
+      "side": "a",
+      "bin": "g",
+      "arm": "P-a2-g",
+      "result": "ok",
+      "load_s": 7.6,
+      "min_avail_bytes": 11428876288
+    },
+    {
+      "tag": "M-a1",
+      "mode": "M",
+      "side": "a",
+      "bin": "g",
+      "arm": "M-a1-g",
+      "result": "ok",
+      "load_s": 8.6,
+      "min_avail_bytes": 11393662976
+    },
+    {
+      "tag": "M-b1",
+      "mode": "M",
+      "side": "b",
+      "bin": "p",
+      "arm": "M-b1-p",
+      "result": "ok",
+      "load_s": 7.6,
+      "min_avail_bytes": 11312267264
+    },
+    {
+      "tag": "M-b2",
+      "mode": "M",
+      "side": "b",
+      "bin": "p",
+      "arm": "M-b2-p",
+      "result": "ok",
+      "load_s": 7.6,
+      "min_avail_bytes": 10243072000
+    },
+    {
+      "tag": "M-a2",
+      "mode": "M",
+      "side": "a",
+      "bin": "g",
+      "arm": "M-a2-g",
+      "result": "ok",
+      "load_s": 7.6,
+      "min_avail_bytes": 10486599680
+    },
+    {
+      "tag": "D-a1",
+      "mode": "D",
+      "side": "a",
+      "bin": "g",
+      "arm": "D-a1-g",
+      "result": "ok",
+      "load_s": 8.6,
+      "min_avail_bytes": 9996558336
+    },
+    {
+      "tag": "D-b1",
+      "mode": "D",
+      "side": "b",
+      "bin": "p",
+      "arm": "D-b1-p",
+      "result": "ok",
+      "load_s": 8.6,
+      "min_avail_bytes": 9968558080
+    },
+    {
+      "tag": "D-b2",
+      "mode": "D",
+      "side": "b",
+      "bin": "p",
+      "arm": "D-b2-p",
+      "result": "ok",
+      "load_s": 8.6,
+      "min_avail_bytes": 9958588416
+    },
+    {
+      "tag": "D-a2",
+      "mode": "D",
+      "side": "a",
+      "bin": "g",
+      "arm": "D-a2-g",
+      "result": "ok",
+      "load_s": 8.6,
+      "min_avail_bytes": 9888485376
+    },
+    {
+      "tag": "XM-a1",
+      "mode": "XM",
+      "side": "a",
+      "bin": "g",
+      "arm": "XM-a1-g",
+      "result": "ok",
+      "load_s": 7.6,
+      "min_avail_bytes": 10594979840
+    },
+    {
+      "tag": "XM-b1",
+      "mode": "XM",
+      "side": "b",
+      "bin": "p",
+      "arm": "XM-b1-p",
+      "result": "ok",
+      "load_s": 7.6,
+      "min_avail_bytes": 10589265920
+    }
+  ],
+  "plan": {
+    "sampled": [
+      [
+        "s",
+        "short",
+        "128s"
+      ],
+      [
+        "s",
+        "chat",
+        "512s"
+      ],
+      [
+        "s",
+        "code",
+        "512s"
+      ],
+      [
+        "s",
+        "json",
+        "512s"
+      ],
+      [
+        "s",
+        "reason",
+        "768s"
+      ]
+    ],
+    "core": [
+      [
+        "warmup",
+        "short",
+        8
+      ],
+      [
+        "r1",
+        "short",
+        128
+      ],
+      [
+        "r1",
+        "long",
+        128
+      ],
+      [
+        "r2",
+        "short",
+        128
+      ],
+      [
+        "r2",
+        "long",
+        128
+      ],
+      [
+        "t",
+        "chat",
+        512
+      ],
+      [
+        "t",
+        "code",
+        512
+      ],
+      [
+        "t",
+        "json",
+        512
+      ],
+      [
+        "t",
+        "reason",
+        768
+      ]
+    ]
+  },
+  "prompts": {
+    "short": "C:\\ArifiLabs\\cache\\mtp-x1-lane\\cells\\sg-short.txt",
+    "long": "C:\\ArifiLabs\\cache\\strata-x1\\prompt-long.txt",
+    "chat": "C:\\ArifiLabs\\cache\\mtp-x1-lane\\cells\\pgc-chat.txt",
+    "code": "C:\\ArifiLabs\\cache\\mtp-x1-lane\\cells\\pgc-code.txt",
+    "json": "C:\\ArifiLabs\\cache\\mtp-x1-lane\\cells\\pgc-json.txt",
+    "reason": "C:\\ArifiLabs\\cache\\mtp-x1-lane\\cells\\pgc-reason.txt"
+  },
+  "trim_ws": "trimmed 243 processes; available MB 10451 -> 11111",
+  "start_P-a1-g": {
+    "committed_GB": 23.37,
+    "waited_s": 32.0,
+    "avail_GB": 12.62
+  },
+  "start_P-b1-p": {
+    "committed_GB": 23.31,
+    "waited_s": 31.0,
+    "avail_GB": 12.24
+  },
+  "start_P-b2-p": {
+    "committed_GB": 23.15,
+    "waited_s": 31.0,
+    "avail_GB": 12.34
+  },
+  "start_P-a2-g": {
+    "committed_GB": 23.15,
+    "waited_s": 31.0,
+    "avail_GB": 12.3
+  },
+  "start_M-a1-g": {
+    "committed_GB": 23.15,
+    "waited_s": 31.0,
+    "avail_GB": 12.28
+  },
+  "start_M-b1-p": {
+    "committed_GB": 23.15,
+    "waited_s": 31.0,
+    "avail_GB": 12.23
+  },
+  "start_M-b2-p": {
+    "committed_GB": 23.18,
+    "waited_s": 31.0,
+    "avail_GB": 12.19
+  },
+  "start_M-a2-g": {
+    "committed_GB": 23.72,
+    "waited_s": 31.0,
+    "avail_GB": 11.4
+  },
+  "start_D-a1-g": {
+    "committed_GB": 23.19,
+    "waited_s": 31.0,
+    "avail_GB": 11.63
+  },
+  "start_D-b1-p": {
+    "committed_GB": 23.2,
+    "waited_s": 31.0,
+    "avail_GB": 11.62
+  },
+  "start_D-b2-p": {
+    "committed_GB": 22.99,
+    "waited_s": 31.0,
+    "avail_GB": 11.68
+  },
+  "start_D-a2-g": {
+    "committed_GB": 23.02,
+    "waited_s": 31.0,
+    "avail_GB": 11.54
+  },
+  "start_XM-a1-g": {
+    "committed_GB": 23.05,
+    "waited_s": 31.0,
+    "avail_GB": 11.51
+  },
+  "start_XM-b1-p": {
+    "committed_GB": 23.02,
+    "waited_s": 31.0,
+    "avail_GB": 11.51
+  },
+  "finished_utc": "2026-10-09T05:14:50.1465676Z"
+}

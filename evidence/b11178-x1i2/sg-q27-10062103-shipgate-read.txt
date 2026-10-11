@@ -1,0 +1,8 @@
+sg-q27-10062103 SHIPGATE-PASS
+| model | mode | prompt | bins | rounds comparator -> integ | ids | RAM |
+|---|---|---|---|---|---|---|
+| q27 | plain | short | x vs i | decode 4.22/4.18/4.46/4.39 -> 4.41/4.62/4.63/4.62 (+5.90%, band 6.51%); prompt 14.19/14.96/17.31/17.07 -> 19.11/16.97/18.21/18.91 (+15.24%, band 19.67%) | ids same | RAM min 11.46 / 11.86 GB |
+| q27 | plain | long | x vs i | decode 4.33/4.35/4.44/4.21 -> 4.56/4.60/4.61/4.61 (+6.05%, band 5.46%); prompt 96.31/104.10/104.94/106.27 -> 99.30/107.28/103.28/107.55 (+1.41%, band 9.68%) | ids comparator-drift@[None, 92, None, 92] (integ stable all rounds) | RAM min 11.46 / 11.86 GB |
+| q27 | DFlash2 | short | x vs i | decode 9.89/10.20/10.77/11.00 -> 12.11/12.06/12.10/12.08 (+15.55%, band 10.66%); prompt 14.70/15.74/17.45/15.37 -> 18.19/17.81/18.06/17.55 (+13.20%, band 17.38%) | ids diff@[78, None, 78, None] (Q4 tie rule) acc 89/113,89/113,89/113,89/113 | RAM min 8.71 / 10.34 GB |
+| q27 | DFlash2 | long | x vs i | decode 10.17/10.56/10.72/11.00 -> 11.64/11.68/11.12/11.74 (+8.76%, band 7.81%); prompt 96.85/101.90/95.34/103.72 -> 97.52/104.08/72.37/105.86 (-4.52%, band 35.27%) | ids diff@[104, 92, 104, 92] (Q4 tie rule) acc 88/113,88/113,88/113,88/113 | RAM min 8.71 / 10.34 GB |
+

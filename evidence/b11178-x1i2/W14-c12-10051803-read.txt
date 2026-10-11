@@ -1,0 +1,34 @@
+S-fix ok reqs 30 minGB 9
+  short: n=10 distinct=1 len=[64] pp=26.97 tg=11.031 draft=(None, None)
+  2k: n=10 distinct=1 len=[16] pp=167.66 tg=10.609 draft=(None, None)
+  long: n=10 distinct=1 len=[64] pp=148.21 tg=10.949 draft=(None, None)
+S-keep ok reqs 30 minGB 11
+  short: n=10 distinct=1 len=[64] pp=24.58 tg=10.785 draft=(None, None)
+  2k: n=10 distinct=2 len=[16, 16] pp=166.14 tg=10.153 draft=(None, None)
+  long: n=10 distinct=2 len=[64, 64] pp=145.09 tg=10.585 draft=(None, None)
+S-fix2 ok reqs 9 minGB 11
+  short: n=3 distinct=1 len=[64] pp=24.44 tg=10.727 draft=(None, None)
+  2k: n=3 distinct=1 len=[16] pp=165.40 tg=10.032 draft=(None, None)
+  long: n=3 distinct=1 len=[64] pp=145.18 tg=10.676 draft=(None, None)
+M-fix ok reqs 6 minGB 11
+  short: n=3 distinct=1 len=[64] pp=26.43 tg=16.417 draft=(44, 40)
+  long: n=3 distinct=1 len=[64] pp=139.34 tg=16.934 draft=(54, 43)
+M-keep ok reqs 6 minGB 10
+  short: n=3 distinct=1 len=[64] pp=24.89 tg=17.411 draft=(47, 43)
+  long: n=3 distinct=3 len=[64, 64, 64] pp=137.47 tg=16.341 draft=(56, 43)
+M-fix2 ok reqs 6 minGB 9
+  short: n=3 distinct=1 len=[64] pp=26.29 tg=16.621 draft=(44, 40)
+  long: n=3 distinct=1 len=[64] pp=138.60 tg=17.007 draft=(54, 43)
+short S-fix==S-fix2 True S-fix==S-keep True M-fix==S-fix False M-fix==M-fix2 True
+long S-fix==S-fix2 True S-fix==S-keep False M-fix==S-fix True M-fix==M-fix2 True
+2k S-fix==S-fix2 True S-fix==S-keep False M-fix==S-fix None M-fix==M-fix2 None
+cost S short pp: fix=25.705 keep=24.576 delta=+4.59%
+cost S short tg: fix=10.879 keep=10.785 delta=+0.87%
+cost S 2k pp: fix=166.528 keep=166.139 delta=+0.23%
+cost S 2k tg: fix=10.320 keep=10.153 delta=+1.65%
+cost S long pp: fix=146.699 keep=145.093 delta=+1.11%
+cost S long tg: fix=10.812 keep=10.585 delta=+2.14%
+cost M short pp: fix=26.361 keep=24.890 delta=+5.91%
+cost M short tg: fix=16.519 keep=17.411 delta=-5.12%
+cost M long pp: fix=138.969 keep=137.469 delta=+1.09%
+cost M long tg: fix=16.971 keep=16.341 delta=+3.85%

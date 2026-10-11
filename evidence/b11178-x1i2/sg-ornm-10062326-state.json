@@ -1,0 +1,487 @@
+{
+  "run_id": "sg-ornm-10062326",
+  "state": "shipgate-gpu-complete",
+  "pid": 7700,
+  "started_utc": "2026-10-07T03:26:03.3016760Z",
+  "head": "7156c616079285b495b03e3ef03d7c4b554ab182",
+  "arms": [
+    {
+      "arm": "M-a1-i",
+      "args": [
+        "-m",
+        "D:\\ArifiLabs\\models\\hf\\ornith-ai\\Ornith-1.5-35B-A3B-GGUF\\Ornith-1.5-35B-Q4_K_M.gguf",
+        "-ngl",
+        "999",
+        "-np",
+        "1",
+        "-fa",
+        "on",
+        "-c",
+        "4096",
+        "-ub",
+        "512",
+        "-b",
+        "2048",
+        "-lm",
+        "dio",
+        "--lazy-mode",
+        "on",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "--spec-type",
+        "draft-mtp",
+        "--spec-draft-n-max",
+        "3",
+        "--spec-draft-p-min",
+        "0.5"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 2546814976.0,
+      "started_utc": "2026-10-07T03:27:39.9018873Z",
+      "healthy": true,
+      "peak_ws_bytes": 742285312,
+      "peak_private_bytes": 24808902656,
+      "min_avail_bytes": 14824603648,
+      "avail_before_bytes": 15747923968,
+      "requests": [
+        {
+          "tag": "sg-ornm-10062326-M-a1-i-warmup-short",
+          "exit": 0,
+          "summary": "prompt_n=12 prefill_tps=44.07 ttft_ms=312.7 gen_n=8 decode_tps=24.82 draft=4/5"
+        },
+        {
+          "tag": "sg-ornm-10062326-M-a1-i-r1-short",
+          "exit": 0,
+          "summary": "prompt_n=12 prefill_tps=56.75 ttft_ms=231.2 gen_n=128 decode_tps=33.43 draft=79/90"
+        },
+        {
+          "tag": "sg-ornm-10062326-M-a1-i-r1-long",
+          "exit": 0,
+          "summary": "prompt_n=597 prefill_tps=402.82 ttft_ms=1516.2 gen_n=128 decode_tps=35.3 draft=78/88"
+        },
+        {
+          "tag": "sg-ornm-10062326-M-a1-i-r2-short",
+          "exit": 0,
+          "summary": "prompt_n=12 prefill_tps=56.72 ttft_ms=243.5 gen_n=128 decode_tps=33.77 draft=79/105"
+        },
+        {
+          "tag": "sg-ornm-10062326-M-a1-i-r2-long",
+          "exit": 0,
+          "summary": "prompt_n=597 prefill_tps=430.78 ttft_ms=1462.0 gen_n=128 decode_tps=35.15 draft=78/88"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 14688,
+      "load_s": 8.7,
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.07.574.546 I common_speculative_init_result: creating MTP draft context against the target model 'D:\\ArifiLabs\\models\\hf\\ornith-ai\\Ornith-1.5-35B-A3B-GGUF\\Ornith-1.5-35B-Q4_K_M.gguf'\r",
+        "0.09.438.300 I slot print_timing: id  0 | task 0 | draft acceptance = 0.80000 (    4 accepted /     5 generated), mean len =  2.33\r",
+        "0.09.438.301 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 4 accepted)\r",
+        "0.09.438.302 I slot print_timing: id  0 | task 0 | spec round cost  = draft 110844 us/3, verify 161324 us/3, plain 0 us/0, process 4928 us, save 0 us, restore 0 us\r",
+        "0.14.898.889 I slot print_timing: id  0 | task 6 | draft acceptance = 0.87778 (   79 accepted /    90 generated), mean len =  2.80\r",
+        "0.14.898.890 I slot print_timing: id  0 | task 6 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 79 accepted)\r",
+        "0.14.898.891 I slot print_timing: id  0 | task 6 | spec round cost  = draft 811012 us/48, verify 2555309 us/44, plain 210424 us/4, process 156853 us, save 0 us, restore 0 us\r",
+        "0.22.003.833 I slot print_timing: id  0 | task 57 | draft acceptance = 0.88636 (   78 accepted /    88 generated), mean len =  2.86\r",
+        "0.22.003.834 I slot print_timing: id  0 | task 57 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 78 accepted)\r",
+        "0.22.003.836 I slot print_timing: id  0 | task 57 | spec round cost  = draft 789591 us/49, verify 2354718 us/42, plain 249244 us/7, process 145317 us, save 0 us, restore 0 us\r",
+        "0.26.936.000 I slot print_timing: id  0 | task 110 | draft acceptance = 0.75238 (   79 accepted /   105 generated), mean len =  2.72\r",
+        "0.26.936.001 I slot print_timing: id  0 | task 110 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 79 accepted)\r",
+        "0.26.936.003 I slot print_timing: id  0 | task 110 | spec round cost  = draft 837456 us/48, verify 2634553 us/46, plain 75885 us/2, process 152688 us, save 0 us, restore 0 us\r",
+        "0.34.062.437 I slot print_timing: id  0 | task 161 | draft acceptance = 0.88636 (   78 accepted /    88 generated), mean len =  2.86\r",
+        "0.34.062.438 I slot print_timing: id  0 | task 161 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 78 accepted)\r",
+        "0.34.062.442 I slot print_timing: id  0 | task 161 | spec round cost  = draft 788985 us/49, verify 2358455 us/42, plain 253214 us/7, process 152190 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-07T03:28:18.0042456Z"
+    },
+    {
+      "arm": "M-b1-i",
+      "args": [
+        "-m",
+        "D:\\ArifiLabs\\models\\hf\\ornith-ai\\Ornith-1.5-35B-A3B-GGUF\\Ornith-1.5-35B-Q4_K_M.gguf",
+        "-ngl",
+        "999",
+        "-np",
+        "1",
+        "-fa",
+        "on",
+        "-c",
+        "4096",
+        "-ub",
+        "512",
+        "-b",
+        "2048",
+        "-lm",
+        "dio",
+        "--lazy-mode",
+        "on",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "--spec-type",
+        "draft-mtp",
+        "--spec-draft-n-max",
+        "3",
+        "--spec-draft-p-min",
+        "0.5"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 2558210048.0,
+      "started_utc": "2026-10-07T03:28:50.4474485Z",
+      "healthy": true,
+      "peak_ws_bytes": 742920192,
+      "peak_private_bytes": 24810262528,
+      "min_avail_bytes": 13568397312,
+      "avail_before_bytes": 14722031616,
+      "requests": [
+        {
+          "tag": "sg-ornm-10062326-M-b1-i-warmup-short",
+          "exit": 0,
+          "summary": "prompt_n=12 prefill_tps=42.84 ttft_ms=311.8 gen_n=8 decode_tps=24.67 draft=4/5"
+        },
+        {
+          "tag": "sg-ornm-10062326-M-b1-i-r1-short",
+          "exit": 0,
+          "summary": "prompt_n=12 prefill_tps=56.68 ttft_ms=245.2 gen_n=128 decode_tps=34.69 draft=79/90"
+        },
+        {
+          "tag": "sg-ornm-10062326-M-b1-i-r1-long",
+          "exit": 0,
+          "summary": "prompt_n=597 prefill_tps=390.86 ttft_ms=1560.7 gen_n=128 decode_tps=34.2 draft=78/88"
+        },
+        {
+          "tag": "sg-ornm-10062326-M-b1-i-r2-short",
+          "exit": 0,
+          "summary": "prompt_n=12 prefill_tps=57.87 ttft_ms=247.2 gen_n=128 decode_tps=33.85 draft=79/105"
+        },
+        {
+          "tag": "sg-ornm-10062326-M-b1-i-r2-long",
+          "exit": 0,
+          "summary": "prompt_n=597 prefill_tps=428.82 ttft_ms=1472.7 gen_n=128 decode_tps=35.06 draft=78/88"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 28928,
+      "load_s": 8.6,
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.08.035.204 I common_speculative_init_result: creating MTP draft context against the target model 'D:\\ArifiLabs\\models\\hf\\ornith-ai\\Ornith-1.5-35B-A3B-GGUF\\Ornith-1.5-35B-Q4_K_M.gguf'\r",
+        "0.09.319.728 I slot print_timing: id  0 | task 0 | draft acceptance = 0.80000 (    4 accepted /     5 generated), mean len =  2.33\r",
+        "0.09.319.728 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 4 accepted)\r",
+        "0.09.319.730 I slot print_timing: id  0 | task 0 | spec round cost  = draft 110559 us/3, verify 161431 us/3, plain 0 us/0, process 6341 us, save 0 us, restore 0 us\r",
+        "0.14.640.656 I slot print_timing: id  0 | task 6 | draft acceptance = 0.87778 (   79 accepted /    90 generated), mean len =  2.80\r",
+        "0.14.640.656 I slot print_timing: id  0 | task 6 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 79 accepted)\r",
+        "0.14.640.658 I slot print_timing: id  0 | task 6 | spec round cost  = draft 781639 us/48, verify 2499102 us/44, plain 193665 us/4, process 126628 us, save 0 us, restore 0 us\r",
+        "0.22.040.876 I slot print_timing: id  0 | task 57 | draft acceptance = 0.88636 (   78 accepted /    88 generated), mean len =  2.86\r",
+        "0.22.040.877 I slot print_timing: id  0 | task 57 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 78 accepted)\r",
+        "0.22.040.879 I slot print_timing: id  0 | task 57 | spec round cost  = draft 823179 us/49, verify 2433724 us/42, plain 265012 us/7, process 120852 us, save 0 us, restore 0 us\r",
+        "0.26.809.111 I slot print_timing: id  0 | task 110 | draft acceptance = 0.75238 (   79 accepted /   105 generated), mean len =  2.72\r",
+        "0.26.809.112 I slot print_timing: id  0 | task 110 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 79 accepted)\r",
+        "0.26.809.114 I slot print_timing: id  0 | task 110 | spec round cost  = draft 844049 us/48, verify 2626464 us/46, plain 76621 us/2, process 141632 us, save 0 us, restore 0 us\r",
+        "0.33.970.628 I slot print_timing: id  0 | task 161 | draft acceptance = 0.88636 (   78 accepted /    88 generated), mean len =  2.86\r",
+        "0.33.970.629 I slot print_timing: id  0 | task 161 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 78 accepted)\r",
+        "0.33.970.631 I slot print_timing: id  0 | task 161 | spec round cost  = draft 797122 us/49, verify 2363464 us/42, plain 255330 us/7, process 145868 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-07T03:29:28.3971787Z"
+    },
+    {
+      "arm": "M-b2-i",
+      "args": [
+        "-m",
+        "D:\\ArifiLabs\\models\\hf\\ornith-ai\\Ornith-1.5-35B-A3B-GGUF\\Ornith-1.5-35B-Q4_K_M.gguf",
+        "-ngl",
+        "999",
+        "-np",
+        "1",
+        "-fa",
+        "on",
+        "-c",
+        "4096",
+        "-ub",
+        "512",
+        "-b",
+        "2048",
+        "-lm",
+        "dio",
+        "--lazy-mode",
+        "on",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "--spec-type",
+        "draft-mtp",
+        "--spec-draft-n-max",
+        "3",
+        "--spec-draft-p-min",
+        "0.5"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 2551164928.0,
+      "started_utc": "2026-10-07T03:30:00.9193871Z",
+      "healthy": true,
+      "peak_ws_bytes": 742817792,
+      "peak_private_bytes": 24808386560,
+      "min_avail_bytes": 13450969088,
+      "avail_before_bytes": 14308536320,
+      "requests": [
+        {
+          "tag": "sg-ornm-10062326-M-b2-i-warmup-short",
+          "exit": 0,
+          "summary": "prompt_n=12 prefill_tps=45.09 ttft_ms=288.5 gen_n=8 decode_tps=24.86 draft=4/5"
+        },
+        {
+          "tag": "sg-ornm-10062326-M-b2-i-r1-short",
+          "exit": 0,
+          "summary": "prompt_n=12 prefill_tps=57.01 ttft_ms=242.7 gen_n=128 decode_tps=34.37 draft=79/90"
+        },
+        {
+          "tag": "sg-ornm-10062326-M-b2-i-r1-long",
+          "exit": 0,
+          "summary": "prompt_n=597 prefill_tps=404.08 ttft_ms=1517.6 gen_n=128 decode_tps=34.93 draft=78/88"
+        },
+        {
+          "tag": "sg-ornm-10062326-M-b2-i-r2-short",
+          "exit": 0,
+          "summary": "prompt_n=12 prefill_tps=57.65 ttft_ms=240.0 gen_n=128 decode_tps=33.85 draft=79/105"
+        },
+        {
+          "tag": "sg-ornm-10062326-M-b2-i-r2-long",
+          "exit": 0,
+          "summary": "prompt_n=597 prefill_tps=431.32 ttft_ms=1449.3 gen_n=128 decode_tps=35.23 draft=78/88"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 24912,
+      "load_s": 8.6,
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.07.489.803 I common_speculative_init_result: creating MTP draft context against the target model 'D:\\ArifiLabs\\models\\hf\\ornith-ai\\Ornith-1.5-35B-A3B-GGUF\\Ornith-1.5-35B-Q4_K_M.gguf'\r",
+        "0.09.306.330 I slot print_timing: id  0 | task 0 | draft acceptance = 0.80000 (    4 accepted /     5 generated), mean len =  2.33\r",
+        "0.09.306.331 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 4 accepted)\r",
+        "0.09.306.332 I slot print_timing: id  0 | task 0 | spec round cost  = draft 109473 us/3, verify 160871 us/3, plain 0 us/0, process 7103 us, save 0 us, restore 0 us\r",
+        "0.14.696.795 I slot print_timing: id  0 | task 6 | draft acceptance = 0.87778 (   79 accepted /    90 generated), mean len =  2.80\r",
+        "0.14.696.796 I slot print_timing: id  0 | task 6 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 79 accepted)\r",
+        "0.14.696.798 I slot print_timing: id  0 | task 6 | spec round cost  = draft 787549 us/48, verify 2504820 us/44, plain 197026 us/4, process 142663 us, save 0 us, restore 0 us\r",
+        "0.21.962.141 I slot print_timing: id  0 | task 57 | draft acceptance = 0.88636 (   78 accepted /    88 generated), mean len =  2.86\r",
+        "0.21.962.142 I slot print_timing: id  0 | task 57 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 78 accepted)\r",
+        "0.21.962.144 I slot print_timing: id  0 | task 57 | spec round cost  = draft 802296 us/49, verify 2362915 us/42, plain 251418 us/7, process 156919 us, save 0 us, restore 0 us\r",
+        "0.26.853.593 I slot print_timing: id  0 | task 110 | draft acceptance = 0.75238 (   79 accepted /   105 generated), mean len =  2.72\r",
+        "0.26.853.594 I slot print_timing: id  0 | task 110 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 79 accepted)\r",
+        "0.26.853.596 I slot print_timing: id  0 | task 110 | spec round cost  = draft 838297 us/48, verify 2622198 us/46, plain 76850 us/2, process 149522 us, save 0 us, restore 0 us\r",
+        "0.33.955.721 I slot print_timing: id  0 | task 161 | draft acceptance = 0.88636 (   78 accepted /    88 generated), mean len =  2.86\r",
+        "0.33.955.722 I slot print_timing: id  0 | task 161 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 78 accepted)\r",
+        "0.33.955.724 I slot print_timing: id  0 | task 161 | spec round cost  = draft 794803 us/49, verify 2364234 us/42, plain 252360 us/7, process 134152 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-07T03:30:38.8746051Z"
+    },
+    {
+      "arm": "M-a2-i",
+      "args": [
+        "-m",
+        "D:\\ArifiLabs\\models\\hf\\ornith-ai\\Ornith-1.5-35B-A3B-GGUF\\Ornith-1.5-35B-Q4_K_M.gguf",
+        "-ngl",
+        "999",
+        "-np",
+        "1",
+        "-fa",
+        "on",
+        "-c",
+        "4096",
+        "-ub",
+        "512",
+        "-b",
+        "2048",
+        "-lm",
+        "dio",
+        "--lazy-mode",
+        "on",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "--spec-type",
+        "draft-mtp",
+        "--spec-draft-n-max",
+        "3",
+        "--spec-draft-p-min",
+        "0.5"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 2550435840.0,
+      "started_utc": "2026-10-07T03:31:11.3448366Z",
+      "healthy": true,
+      "peak_ws_bytes": 768077824,
+      "peak_private_bytes": 24808529920,
+      "min_avail_bytes": 13514010624,
+      "avail_before_bytes": 14427889664,
+      "requests": [
+        {
+          "tag": "sg-ornm-10062326-M-a2-i-warmup-short",
+          "exit": 0,
+          "summary": "prompt_n=12 prefill_tps=44.16 ttft_ms=294.5 gen_n=8 decode_tps=24.47 draft=4/5"
+        },
+        {
+          "tag": "sg-ornm-10062326-M-a2-i-r1-short",
+          "exit": 0,
+          "summary": "prompt_n=12 prefill_tps=56.53 ttft_ms=235.3 gen_n=128 decode_tps=34.83 draft=79/90"
+        },
+        {
+          "tag": "sg-ornm-10062326-M-a2-i-r1-long",
+          "exit": 0,
+          "summary": "prompt_n=597 prefill_tps=404.27 ttft_ms=1523.5 gen_n=128 decode_tps=35.14 draft=78/88"
+        },
+        {
+          "tag": "sg-ornm-10062326-M-a2-i-r2-short",
+          "exit": 0,
+          "summary": "prompt_n=12 prefill_tps=57.21 ttft_ms=245.1 gen_n=128 decode_tps=33.74 draft=79/105"
+        },
+        {
+          "tag": "sg-ornm-10062326-M-a2-i-r2-long",
+          "exit": 0,
+          "summary": "prompt_n=597 prefill_tps=429.02 ttft_ms=1474.5 gen_n=128 decode_tps=35.06 draft=78/88"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 6948,
+      "load_s": 7.6,
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.07.341.547 I common_speculative_init_result: creating MTP draft context against the target model 'D:\\ArifiLabs\\models\\hf\\ornith-ai\\Ornith-1.5-35B-A3B-GGUF\\Ornith-1.5-35B-Q4_K_M.gguf'\r",
+        "0.08.297.454 I slot print_timing: id  0 | task 0 | draft acceptance = 0.80000 (    4 accepted /     5 generated), mean len =  2.33\r",
+        "0.08.297.455 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 4 accepted)\r",
+        "0.08.297.456 I slot print_timing: id  0 | task 0 | spec round cost  = draft 113941 us/3, verify 161460 us/3, plain 0 us/0, process 6980 us, save 0 us, restore 0 us\r",
+        "0.13.626.323 I slot print_timing: id  0 | task 6 | draft acceptance = 0.87778 (   79 accepted /    90 generated), mean len =  2.80\r",
+        "0.13.626.324 I slot print_timing: id  0 | task 6 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 79 accepted)\r",
+        "0.13.626.325 I slot print_timing: id  0 | task 6 | spec round cost  = draft 773267 us/48, verify 2474162 us/44, plain 194770 us/4, process 143624 us, save 0 us, restore 0 us\r",
+        "0.20.929.956 I slot print_timing: id  0 | task 57 | draft acceptance = 0.88636 (   78 accepted /    88 generated), mean len =  2.86\r",
+        "0.20.929.957 I slot print_timing: id  0 | task 57 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 78 accepted)\r",
+        "0.20.929.959 I slot print_timing: id  0 | task 57 | spec round cost  = draft 796459 us/49, verify 2358432 us/42, plain 250949 us/7, process 150508 us, save 0 us, restore 0 us\r",
+        "0.25.844.981 I slot print_timing: id  0 | task 110 | draft acceptance = 0.75238 (   79 accepted /   105 generated), mean len =  2.72\r",
+        "0.25.844.983 I slot print_timing: id  0 | task 110 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 79 accepted)\r",
+        "0.25.844.995 I slot print_timing: id  0 | task 110 | spec round cost  = draft 839725 us/48, verify 2626540 us/46, plain 74548 us/2, process 159104 us, save 0 us, restore 0 us\r",
+        "0.33.002.543 I slot print_timing: id  0 | task 161 | draft acceptance = 0.88636 (   78 accepted /    88 generated), mean len =  2.86\r",
+        "0.33.002.546 I slot print_timing: id  0 | task 161 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 78 accepted)\r",
+        "0.33.002.549 I slot print_timing: id  0 | task 161 | spec round cost  = draft 798130 us/49, verify 2363740 us/42, plain 250972 us/7, process 150670 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-07T03:31:48.3061266Z"
+    }
+  ],
+  "build_sha": "5f37b74001e015e664f1bdff5239389be5e1580f",
+  "model": "ornm",
+  "comparator": "x",
+  "slots": [
+    {
+      "tag": "M-a1",
+      "mode": "M",
+      "side": "a",
+      "bin": "i",
+      "arm": "M-a1-i",
+      "result": "ok",
+      "load_s": 8.7,
+      "min_avail_bytes": 14824603648
+    },
+    {
+      "tag": "M-b1",
+      "mode": "M",
+      "side": "b",
+      "bin": "i",
+      "arm": "M-b1-i",
+      "result": "ok",
+      "load_s": 8.6,
+      "min_avail_bytes": 13568397312
+    },
+    {
+      "tag": "M-b2",
+      "mode": "M",
+      "side": "b",
+      "bin": "i",
+      "arm": "M-b2-i",
+      "result": "ok",
+      "load_s": 8.6,
+      "min_avail_bytes": 13450969088
+    },
+    {
+      "tag": "M-a2",
+      "mode": "M",
+      "side": "a",
+      "bin": "i",
+      "arm": "M-a2-i",
+      "result": "ok",
+      "load_s": 7.6,
+      "min_avail_bytes": 13514010624
+    }
+  ],
+  "plan": [
+    [
+      "warmup",
+      "short",
+      8
+    ],
+    [
+      "r1",
+      "short",
+      128
+    ],
+    [
+      "r1",
+      "long",
+      128
+    ],
+    [
+      "r2",
+      "short",
+      128
+    ],
+    [
+      "r2",
+      "long",
+      128
+    ]
+  ],
+  "prompts": {
+    "short": "C:\\ArifiLabs\\cache\\mtp-x1-lane\\cells\\sg-short.txt",
+    "long": "C:\\ArifiLabs\\cache\\strata-x1\\prompt-long.txt"
+  },
+  "trim_ws": "trimmed 195 processes; available MB 12881 -> 15461",
+  "start_M-a1-i": {
+    "committed_GB": 20.57,
+    "waited_s": 32.0,
+    "avail_GB": 15.87
+  },
+  "start_M-b1-i": {
+    "committed_GB": 21.21,
+    "waited_s": 31.0,
+    "avail_GB": 14.73
+  },
+  "start_M-b2-i": {
+    "committed_GB": 21.25,
+    "waited_s": 31.0,
+    "avail_GB": 14.31
+  },
+  "start_M-a2-i": {
+    "committed_GB": 21.08,
+    "waited_s": 31.0,
+    "avail_GB": 14.43
+  },
+  "finished_utc": "2026-10-07T03:31:48.3119969Z"
+}

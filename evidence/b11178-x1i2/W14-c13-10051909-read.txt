@@ -1,0 +1,28 @@
+O-fix ok reqs 30 minGB 9
+  short: n=10 distinct=1 lens=[64] pp=40.2 tg=23.55
+  2k: n=10 distinct=1 lens=[16] pp=438.4 tg=23.24
+  long: n=10 distinct=1 lens=[64] pp=370.5 tg=24.22
+O-keep ok reqs 30 minGB 10
+  short: n=10 distinct=2 lens=[64, 64] pp=54.4 tg=26.75
+    first diff pos 60 per-run index of seq: [0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+  2k: n=10 distinct=1 lens=[16] pp=485.6 tg=25.96
+  long: n=10 distinct=2 lens=[64, 64] pp=417.0 tg=26.54
+    first diff pos 48 per-run index of seq: [0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+O-fix2 ok reqs 9 minGB 10
+  short: n=3 distinct=1 lens=[64] pp=51.1 tg=26.27
+  2k: n=3 distinct=1 lens=[16] pp=469.9 tg=24.73
+  long: n=3 distinct=1 lens=[64] pp=414.4 tg=25.74
+D-keep ok reqs 18 minGB 9
+  short: n=6 distinct=1 lens=[64] pp=18.2 tg=4.45
+  2k: n=6 distinct=1 lens=[16] pp=115.5 tg=4.33
+  long: n=6 distinct=1 lens=[64] pp=105.9 tg=4.42
+D-fix ok reqs 18 minGB 10
+  short: n=6 distinct=1 lens=[64] pp=17.4 tg=4.35
+  2k: n=6 distinct=1 lens=[16] pp=115.3 tg=4.37
+  long: n=6 distinct=1 lens=[64] pp=105.1 tg=4.39
+short O-fix==keep_run0 False O-fix==keep_run1 False first diff vs keep0 53
+2k O-fix==keep_run0 False O-fix==keep_run1 False first diff vs keep0 6
+long O-fix==keep_run0 False O-fix==keep_run1 False first diff vs keep0 58
+short O-fix==O-fix2 True O-fix==O-keep False D-fix==D-keep True
+2k O-fix==O-fix2 True O-fix==O-keep False D-fix==D-keep True
+long O-fix==O-fix2 True O-fix==O-keep False D-fix==D-keep True

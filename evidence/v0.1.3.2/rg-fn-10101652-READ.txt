@@ -1,0 +1,9 @@
+rg-fn-10101652 READ (derived by rg_read.py from the per-request json receipts; A = v0.1.3.1, B = v0.1.3.2)
+| model | mode | rounds prompt | A -> B (r1/r2) | ids |
+|---|---|---|---|---|
+| fn | plain | r1+r2 short | decode 11.839/12.043 -> 11.814/12.046 t/s, prompt 30.621/30.111 -> 31.069/30.516 t/s | ids same |
+| fn | plain | r1+r2 long | decode 11.707/11.982 -> 11.648/11.949 t/s, prompt 115.572/155.505 -> 74.045/155.560 t/s | ids same |
+| fn | MTP | r1+r2 short | decode 19.496/20.012 -> 19.563/20.054 t/s, prompt 29.400/29.698 -> 30.346/29.895 t/s | ids same |
+| fn | MTP | r1+r2 long | decode 17.636/17.914 -> 17.722/18.123 t/s, prompt 123.082/148.923 -> 116.517/148.636 t/s | ids same |
+| fn | MTP 40K | r1+r2 short | decode 19.729/20.473 -> 20.003/20.515 t/s, prompt 29.943/29.129 -> 30.608/30.341 t/s | ids same |
+| fn | MTP 40K | r1+r2 long | decode 19.089/19.627 -> 19.270/19.809 t/s, prompt 121.764/148.765 -> 120.538/148.742 t/s | ids same |

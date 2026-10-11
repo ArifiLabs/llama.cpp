@@ -1,0 +1,8 @@
+sg-sx8-10062125 SHIPGATE-BLOCKER
+| model | mode | prompt | bins | rounds comparator -> integ | ids | RAM |
+|---|---|---|---|---|---|---|
+| sx8 | plain | short | x vs i | decode 2.89/2.89/2.90/2.89 -> 2.87/2.96/2.96/2.96 (+1.57%, band 3.06%); prompt 13.61/13.53/13.74/13.75 -> 14.24/14.31/14.25/14.42 (+4.75%, band 1.64%) | ids same | RAM min 12.55 / 12.56 GB |
+| sx8 | plain | long | x vs i | decode 2.89/2.89/2.89/2.89 -> 2.96/2.96/2.96/2.96 (+2.32%, band 1.00%); prompt 92.07/93.39/92.03/93.29 -> 84.72/93.50/91.41/93.76 (-1.99%, band 9.95%) | ids diff@[5, 5, 5, 5] | RAM min 12.55 / 12.56 GB |
+| sx8 | DFlash2 | short | x vs i | decode 8.42/8.40/8.43/8.43 -> 8.88/8.89/8.89/8.89 (+5.56%, band 1.00%); prompt 13.23/13.31/13.23/13.16 -> 13.94/14.00/13.94/13.94 (+5.47%, band 1.16%) | ids same acc 93/135,93/135,93/135,93/135 | RAM min 11.78 / 11.82 GB |
+| sx8 | DFlash2 | long | x vs i | decode 7.86/7.55/7.85/7.74 -> 8.11/8.38/8.31/8.35 (+6.97%, band 3.94%); prompt 86.86/90.84/85.63/91.77 -> 86.53/89.91/85.67/91.86 (-0.31%, band 7.00%) | ids diff@[5, None, 5, None] (Q4 tie rule) acc 91/138,91/138,91/138,91/138 | RAM min 11.78 / 11.82 GB |
+plain/long: plain ids differ from comparator at [5, 5, 5, 5] (comparator self [None, None, None, None])

@@ -1,0 +1,9 @@
+sg-orn-10062214 SHIPGATE-BLOCKER
+| model | mode | prompt | bins | rounds comparator -> integ | ids | RAM |
+|---|---|---|---|---|---|---|
+| orn | plain | short | x vs i | decode 27.48/26.82/26.84/26.85 -> 29.29/29.19/29.47/29.37 (+8.65%, band 2.45%); prompt 53.81/54.85/53.75/55.36 -> 58.87/57.85/57.24/58.50 (+6.74%, band 2.96%) | ids diff@[53, 53, 53, 53] | RAM min 14.52 / 14.67 GB |
+| orn | plain | long | x vs i | decode 26.65/26.56/26.55/26.70 -> 28.93/29.05/29.05/28.87 (+8.88%, band 1.00%); prompt 303.76/433.33/422.65/420.27 -> 305.50/437.47/409.95/438.52 (+0.72%, band 33.43%) | ids diff@[58, 48, 58, 48] | RAM min 14.52 / 14.67 GB |
+| orn | DFlash2 | short | x vs i | decode 29.00/30.03/28.90/30.14 -> 32.09/31.96/32.19/32.05 (+8.65%, band 4.19%); prompt 56.02/56.48/55.43/57.04 -> 59.20/60.28/59.16/59.12 (+5.69%, band 2.87%) | ids diff@[60, None, 60, None] (Q4 tie rule) acc 74/105,74/105,74/105,74/105 | RAM min 12.62 / 13.78 GB |
+| orn | DFlash2 | long | x vs i | decode 31.50/30.84/31.49/31.10 -> 33.58/33.56/33.63/33.61 (+7.57%, band 2.12%); prompt 351.48/415.57/351.37/412.43 -> 378.36/418.94/380.24/414.84 (+4.02%, band 16.77%) | ids comparator-drift@[None, 48, None, 48] (integ stable all rounds) acc 77/99,77/99,77/99,77/99 | RAM min 12.62 / 13.78 GB |
+plain/short: plain ids differ from comparator at [53, 53, 53, 53] (comparator self [None, None, None, None])
+plain/long: plain ids differ from comparator at [58, 48, 58, 48] (comparator self [None, None, None, None])

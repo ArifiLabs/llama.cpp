@@ -1,0 +1,327 @@
+== main_b1: 3 graphs, mean 296.48 ms/graph (GPU op time)
+    103.213 ms  MUL_MAT_VEC q4_K m=6144 k=2560
+     41.933 ms  SCALE
+     21.613 ms  TOP_K
+     10.774 ms  MUL_MAT_ADD MUL_MAT_VEC m=48 k=2560
+      8.907 ms  MUL_MAT_VEC bf16 m=4 k=10240
+      8.702 ms  MUL_MAT_VEC bf16 m=10240 k=320
+      8.614 ms  MUL_MAT_VEC bf16 m=320 k=10240
+      6.902 ms  MUL_MAT_VEC q6_K m=248320 k=2560
+      6.901 ms  MUL_MAT_VEC q6_K m=2560 k=6144
+      6.427 ms  MUL_MAT_VEC q6_K m=10240 k=2560
+      6.299 ms  MUL_MAT_ID_MUL MUL_MAT_ID_VEC m=2560 k=640
+      5.318 ms  FLASH_ATTN_EXT
+      5.145 ms  MUL_MAT_ID q2_0 m=2560 k=640
+      4.813 ms  MUL_MAT_ID_VEC iq2_s m=640 k=2560
+      4.131 ms  MUL_MAT_ID iq4_nl m=2560 k=640
+      4.100 ms  CPY
+      3.904 ms  GATED_DELTA_NET
+      2.889 ms  MUL_MAT_ID iq2_s m=640 k=2560
+      2.692 ms  MUL_MAT_ID_VEC iq3_xxs m=640 k=2560
+      2.462 ms  MUL_MAT_VEC q5_K m=10240 k=2560
+      2.424 ms  MUL_MAT_VEC q6_K m=6144 k=2560
+      2.310 ms  MUL_MAT_ID iq3_xxs m=640 k=2560
+      2.180 ms  MUL_MAT_VEC bf16 m=512 k=2560
+      1.930 ms  MUL_MAT_ID_VEC iq3_s m=640 k=2560
+      1.710 ms  MUL_MAT_ID iq3_s m=640 k=2560
+      1.670 ms  MUL_MAT_VEC q6_K m=12288 k=2560
+      1.262 ms  RMS_NORM_MUL
+      1.256 ms  MUL_MAT_VEC iq4_nl m=2560 k=640
+      1.087 ms  MUL_MAT_VEC iq4_xs m=6144 k=2560
+      0.919 ms  MUL_MAT_VEC iq4_xs m=12288 k=2560
+      0.821 ms  MUL_MAT_VEC q5_K m=12288 k=2560
+      0.769 ms  MUL_MAT_VEC bf16 m=10240 k=2560
+      0.566 ms  MUL_MAT_VEC q5_K m=6144 k=2560
+      0.565 ms  MUL_MAT_VEC iq4_xs m=640 k=2560
+      0.564 ms  MUL_MAT_VEC q6_K m=640 k=2560
+      0.553 ms  TOPK_MOE_EARLY_SOFTMAX_NORM
+      0.551 ms  MUL_MAT_VEC q4_K m=640 k=2560
+      0.550 ms  MUL_MAT_VEC q4_K m=2560 k=6144
+      0.545 ms  MUL_MAT_VEC q5_K m=2560 k=6144
+      0.525 ms  ADD
+== main_b3: 1 graphs, mean 126.73 ms/graph (GPU op time)
+     17.777 ms  MUL_MAT_ID iq4_nl m=2560 k=640
+      9.500 ms  MUL_MAT_VEC bf16 m=320 k=10240
+      9.466 ms  MUL_MAT_VEC bf16 m=10240 k=320
+      9.081 ms  MUL_MAT_ID iq2_s m=640 k=2560
+      8.532 ms  MUL_MAT_ID iq3_xxs m=640 k=2560
+      7.600 ms  MUL_MAT_VEC q6_K m=2560 k=6144
+      7.114 ms  MUL_MAT_VEC q6_K m=248320 k=2560
+      7.076 ms  GATED_DELTA_NET
+      6.882 ms  MUL_MAT_VEC q6_K m=10240 k=2560
+      5.949 ms  MUL_MAT_ID iq3_s m=640 k=2560
+      2.581 ms  MUL_MAT_VEC q5_K m=10240 k=2560
+      2.542 ms  MUL_MAT_VEC q6_K m=6144 k=2560
+      2.303 ms  MUL_MAT_ID q2_0 m=2560 k=640
+      2.300 ms  MUL_MAT_VEC bf16 m=512 k=2560
+      1.823 ms  MUL_MAT_VEC q6_K m=12288 k=2560
+      1.639 ms  RMS_NORM_MUL
+      1.581 ms  MUL_MAT_VEC iq4_nl m=2560 k=640
+      1.441 ms  MUL_MAT_VEC q4_K m=6144 k=2560
+      1.045 ms  MUL_MAT_VEC iq4_xs m=6144 k=2560
+      1.036 ms  CPY
+      1.015 ms  MUL_MAT_VEC bf16 m=10240 k=2560
+      0.881 ms  MUL_MAT_VEC q5_K m=12288 k=2560
+      0.878 ms  MUL_MAT_VEC bf16 m=4 k=10240
+      0.871 ms  MUL_MAT_VEC bf16 m=1 k=2560
+      0.756 ms  MUL_MAT_VEC iq4_xs m=12288 k=2560
+      0.740 ms  MUL
+      0.646 ms  MUL_MAT_VEC q6_K m=640 k=2560
+      0.638 ms  MUL_MAT_VEC q4_K m=640 k=2560
+      0.624 ms  MUL_MAT_VEC q5_K m=6144 k=2560
+      0.609 ms  MUL_MAT_VEC iq4_xs m=640 k=2560
+      0.601 ms  ADD
+      0.597 ms  MUL_MAT_VEC q5_K m=2560 k=6144
+      0.583 ms  HC_POST_W
+      0.548 ms  SCALE
+      0.540 ms  TOPK_MOE_EARLY_SOFTMAX_NORM
+      0.533 ms  DSV4_HC_PRE
+      0.530 ms  SIGMOID_MUL
+      0.528 ms  MUL_MAT_VEC q4_K m=2560 k=6144
+      0.512 ms  MUL_MAT_ID iq4_xs m=640 k=2560
+      0.488 ms  MUL_MAT_VEC bf16 m=48 k=2560
+== main_b4: 21 graphs, mean 140.93 ms/graph (GPU op time)
+     21.577 ms  MUL_MAT_ID iq4_nl m=2560 k=640
+     13.606 ms  MUL_MAT_ID iq2_s m=640 k=2560
+     11.400 ms  MUL_MAT_ID iq3_xxs m=640 k=2560
+      9.001 ms  MUL_MAT_VEC bf16 m=10240 k=320
+      8.994 ms  MUL_MAT_VEC bf16 m=320 k=10240
+      8.861 ms  MUL_MAT_ID iq3_s m=640 k=2560
+      8.455 ms  GATED_DELTA_NET
+      7.165 ms  MUL_MAT_VEC q6_K m=2560 k=6144
+      6.586 ms  MUL_MAT_VEC q6_K m=248320 k=2560
+      6.464 ms  MUL_MAT_VEC q6_K m=10240 k=2560
+      2.638 ms  MUL_MAT_ID q2_0 m=2560 k=640
+      2.610 ms  MUL_MAT_VEC q5_K m=10240 k=2560
+      2.501 ms  MUL_MAT_VEC q6_K m=6144 k=2560
+      2.200 ms  MUL_MAT_VEC bf16 m=512 k=2560
+      1.736 ms  RMS_NORM_MUL
+      1.734 ms  MUL_MAT_VEC q6_K m=12288 k=2560
+      1.593 ms  MUL_MAT_VEC iq4_nl m=2560 k=640
+      1.457 ms  MUL_MAT_VEC q4_K m=6144 k=2560
+      1.169 ms  MUL_MAT_VEC iq4_xs m=6144 k=2560
+      1.122 ms  FLASH_ATTN_EXT
+      1.052 ms  CPY
+      0.913 ms  MUL_MAT_VEC q5_K m=12288 k=2560
+      0.899 ms  MUL_MAT_VEC bf16 m=4 k=10240
+      0.852 ms  MUL_MAT_VEC iq4_xs m=12288 k=2560
+      0.803 ms  MUL
+      0.767 ms  MUL_MAT_VEC bf16 m=10240 k=2560
+      0.744 ms  MUL_MAT_VEC bf16 m=1 k=2560
+      0.742 ms  MUL_MAT_ID iq4_xs m=640 k=2560
+      0.664 ms  HC_POST_W
+      0.655 ms  MUL_MAT_VEC q6_K m=640 k=2560
+      0.644 ms  MUL_MAT_VEC iq4_xs m=640 k=2560
+      0.633 ms  MUL_MAT_VEC q4_K m=640 k=2560
+      0.610 ms  MUL_MAT_VEC q5_K m=6144 k=2560
+      0.605 ms  MUL_MAT_VEC q5_K m=2560 k=6144
+      0.601 ms  DSV4_HC_PRE
+      0.552 ms  ADD
+      0.542 ms  SIGMOID_MUL
+      0.535 ms  MUL_MAT_VEC q4_K m=2560 k=6144
+      0.491 ms  MULTI_ADD
+      0.471 ms  TOPK_MOE_EARLY_SOFTMAX_NORM
+== main_b512: 1 graphs, mean 2864.37 ms/graph (GPU op time)
+    320.261 ms  MUL_MAT_ID iq2_s m=640 k=2560
+    305.684 ms  MUL_MAT_ID iq4_nl m=2560 k=640
+    290.149 ms  MUL_MAT_ID iq3_xxs m=640 k=2560
+    186.018 ms  MUL_MAT bf16 m=320 k=10240
+    151.846 ms  MUL_MAT_ID iq3_s m=640 k=2560
+    140.513 ms  MUL_MAT bf16 m=10240 k=320
+    128.853 ms  MUL_MAT q6_K m=2560 k=6144
+    118.054 ms  RMS_NORM_MUL
+    117.775 ms  MUL_MAT bf16 m=4 k=10240
+    109.427 ms  MUL_MAT q6_K m=10240 k=2560
+     75.387 ms  MUL
+     63.667 ms  HC_POST_W
+     62.606 ms  MUL_MAT_ID q2_0 m=2560 k=640
+     57.632 ms  DSV4_HC_PRE
+     53.458 ms  GATED_DELTA_NET
+     43.510 ms  MUL_MAT q5_K m=10240 k=2560
+     43.111 ms  MUL_MAT bf16 m=512 k=2560
+     42.959 ms  MUL_MAT q6_K m=6144 k=2560
+     41.927 ms  SSM_CONV_SILU
+     40.459 ms  MULTI_ADD
+     33.781 ms  FLASH_ATTN_EXT
+     31.339 ms  SIGMOID_MUL
+     31.227 ms  MUL_MAT q6_K m=12288 k=2560
+     28.721 ms  CONCAT
+     27.535 ms  GLU
+     24.943 ms  MUL_MAT q4_K m=6144 k=2560
+     18.664 ms  MUL_MAT iq4_xs m=6144 k=2560
+     18.476 ms  TOP_K
+     15.313 ms  MUL_MAT bf16 m=1 k=2560
+     15.090 ms  MUL_MAT q5_K m=12288 k=2560
+     14.595 ms  ADD
+     14.580 ms  RMS_NORM
+     13.751 ms  MUL_MAT iq4_nl m=2560 k=640
+     13.113 ms  MUL_MAT iq4_xs m=12288 k=2560
+     13.031 ms  MUL_MAT_ID iq4_xs m=640 k=2560
+     12.110 ms  MUL_MAT bf16 m=10240 k=2560
+     11.508 ms  MUL_MAT q4_K m=640 k=2560
+     11.011 ms  MUL_MAT q5_K m=6144 k=2560
+     10.925 ms  MUL_MAT bf16 m=48 k=2560
+     10.511 ms  MUL_MAT q6_K m=640 k=2560
+== main_b8: 1 graphs, mean 334.42 ms/graph (GPU op time)
+     92.014 ms  MUL_MAT_ID iq4_nl m=2560 k=640
+     37.441 ms  MUL_MAT_ID iq2_s m=640 k=2560
+     27.491 ms  MUL_MAT_ID iq3_xxs m=640 k=2560
+     21.676 ms  MUL_MAT_VEC q6_K m=10240 k=2560
+     19.892 ms  MUL_MAT_ID iq3_s m=640 k=2560
+     15.194 ms  MUL_MAT_VEC q4_K m=6144 k=2560
+     15.133 ms  MUL_MAT_VEC bf16 m=10240 k=320
+     11.328 ms  ROPE
+     10.297 ms  MUL_MAT_VEC bf16 m=320 k=10240
+     10.076 ms  MUL_MAT_VEC q6_K m=2560 k=6144
+      9.068 ms  GATED_DELTA_NET
+      7.712 ms  MUL_MAT_ID q2_0 m=2560 k=640
+      3.915 ms  SCALE
+      3.474 ms  RMS_NORM_MUL
+      3.446 ms  MUL_MAT_VEC iq4_nl m=2560 k=640
+      3.342 ms  MUL_MAT_VEC q5_K m=10240 k=2560
+      3.173 ms  MUL_MAT_VEC q6_K m=6144 k=2560
+      2.456 ms  MUL_MAT_VEC bf16 m=512 k=2560
+      2.224 ms  MUL_MAT_VEC iq4_xs m=6144 k=2560
+      2.018 ms  MUL_MAT_VEC q6_K m=12288 k=2560
+      1.833 ms  MUL_MAT_VEC iq4_xs m=12288 k=2560
+      1.628 ms  TOP_K
+      1.618 ms  MUL_MAT_VEC bf16 m=1 k=2560
+      1.575 ms  MUL_MAT_VEC bf16 m=4 k=10240
+      1.478 ms  FLASH_ATTN_EXT
+      1.425 ms  MUL
+      1.394 ms  CPY
+      1.208 ms  MUL_MAT_VEC q4_K m=640 k=2560
+      1.201 ms  MUL_MAT_VEC q5_K m=12288 k=2560
+      1.185 ms  MUL_MAT_ID iq4_xs m=640 k=2560
+      1.141 ms  HC_POST_W
+      1.093 ms  MUL_MAT_VEC q4_K m=2560 k=6144
+      1.071 ms  DSV4_HC_PRE
+      1.039 ms  MUL_MAT_VEC iq4_xs m=640 k=2560
+      0.980 ms  MUL_MAT_VEC q5_K m=2560 k=6144
+      0.951 ms  MUL_MAT_VEC q6_K m=640 k=2560
+      0.903 ms  MULTI_ADD
+      0.820 ms  MUL_MAT_VEC q5_K m=6144 k=2560
+      0.776 ms  SIGMOID_MUL
+      0.762 ms  ADD
+== main_b81: 1 graphs, mean 1061.07 ms/graph (GPU op time)
+    175.999 ms  MUL_MAT_ID iq3_xxs m=640 k=2560
+    163.885 ms  MUL_MAT_ID iq2_s m=640 k=2560
+    136.525 ms  MUL_MAT_ID iq4_nl m=2560 k=640
+     92.029 ms  MUL_MAT bf16 m=320 k=10240
+     78.838 ms  MUL_MAT_ID iq3_s m=640 k=2560
+     57.571 ms  MUL_MAT q6_K m=10240 k=2560
+     40.276 ms  MUL_MAT q6_K m=2560 k=6144
+     35.723 ms  MUL_MAT bf16 m=10240 k=320
+     30.726 ms  MUL_MAT_ID q2_0 m=2560 k=640
+     21.158 ms  MUL_MAT bf16 m=4 k=10240
+     19.041 ms  RMS_NORM_MUL
+     15.912 ms  MUL_MAT q5_K m=10240 k=2560
+     15.142 ms  GATED_DELTA_NET
+     12.339 ms  MUL_MAT bf16 m=512 k=2560
+     11.412 ms  MUL
+     10.398 ms  MUL_MAT bf16 m=2560 k=2560
+      9.774 ms  MUL_MAT q6_K m=6144 k=2560
+      9.590 ms  HC_POST_W
+      9.119 ms  DSV4_HC_PRE
+      7.377 ms  SSM_CONV_SILU
+      6.432 ms  MUL_MAT q6_K m=12288 k=2560
+      6.411 ms  MULTI_ADD
+      6.292 ms  MUL_MAT_ID iq4_xs m=640 k=2560
+      5.786 ms  MUL_MAT q4_K m=6144 k=2560
+      5.116 ms  SIGMOID_MUL
+      4.962 ms  SCALE
+      4.842 ms  CONCAT
+      4.300 ms  GLU
+      4.279 ms  MUL_MAT bf16 m=48 k=2560
+      4.032 ms  MUL_MAT iq4_xs m=6144 k=2560
+      3.885 ms  MUL_MAT iq4_nl m=2560 k=640
+      3.548 ms  MUL_MAT q5_K m=12288 k=2560
+      3.087 ms  MUL_MAT iq4_xs m=12288 k=2560
+      3.081 ms  MUL_MAT bf16 m=10240 k=2560
+      3.068 ms  CPY
+      3.046 ms  MUL_MAT bf16 m=1 k=2560
+      2.966 ms  RMS_NORM
+      2.541 ms  MUL_MAT q6_K m=640 k=2560
+      2.529 ms  MUL_MAT q4_K m=640 k=2560
+      2.492 ms  MUL_MAT q5_K m=2560 k=6144
+== mtp_step: 63 graphs, mean 6.18 ms/graph (GPU op time)
+      1.178 ms  MUL_MAT_VEC q8_0 m=2560 k=5120
+      1.140 ms  MUL_MAT_VEC q6_K m=40525 k=2560
+      0.733 ms  MUL_MAT_VEC q8_0 m=320 k=10240
+      0.691 ms  MUL_MAT_ID_VEC q8_0 m=640 k=2560
+      0.459 ms  MUL_MAT_VEC q8_0 m=12288 k=2560
+      0.397 ms  TOP_K
+      0.369 ms  FLASH_ATTN_EXT
+      0.264 ms  MUL_MAT_ID_MUL MUL_MAT_ID_VEC m=2560 k=640
+      0.239 ms  MUL_MAT_VEC q8_0 m=2560 k=6144
+      0.170 ms  MUL_MAT_VEC q8_0 m=10240 k=320
+      0.078 ms  MUL_MAT_VEC f32 m=512 k=2560
+      0.060 ms  MUL_MAT_VEC q8_0 m=640 k=2560
+      0.057 ms  RMS_NORM_MUL
+      0.053 ms  PAD
+      0.042 ms  MUL_MAT_VEC q8_0 m=512 k=2560
+      0.028 ms  MUL_MAT_VEC q8_0 m=2560 k=640
+      0.021 ms  SCALE
+      0.018 ms  FILL
+      0.017 ms  SET_ROWS
+      0.016 ms  MUL_MAT_VEC f32 m=4 k=10240
+      0.015 ms  MUL_MAT_ID q8_0 m=640 k=2560
+      0.014 ms  CONT
+      0.014 ms  GET_ROWS
+      0.014 ms  SIGMOID_MUL
+      0.013 ms  ADD
+      0.012 ms  TOPK_MOE_EARLY_SOFTMAX_NORM
+      0.008 ms  HC_POST_W
+      0.008 ms  SUM_ROWS
+      0.008 ms  SILU
+      0.008 ms  MUL_MAT_ID q8_0 m=2560 k=640
+      0.007 ms  CONCAT
+      0.007 ms  DSV4_HC_PRE
+      0.006 ms  REPEAT
+      0.005 ms  GLU
+      0.005 ms  ROPE
+      0.005 ms  ROPE_VIEW_SET_ROWS
+      0.004 ms  MUL_MAT_VEC f32 m=1 k=2560
+      0.000 ms  MUL
+      0.000 ms  MULTI_ADD
+== other: 25 graphs, mean 13.81 ms/graph (GPU op time)
+      3.950 ms  MUL_MAT_ID q8_0 m=640 k=2560
+      2.696 ms  MUL_MAT q8_0 m=2560 k=5120
+      1.786 ms  MUL_MAT_ID q8_0 m=2560 k=640
+      1.604 ms  MUL_MAT_VEC q8_0 m=12288 k=2560
+      0.600 ms  MUL_MAT q8_0 m=512 k=2560
+      0.378 ms  MUL_MAT q8_0 m=12288 k=2560
+      0.312 ms  MUL_MAT q8_0 m=10240 k=320
+      0.278 ms  MUL_MAT_VEC q8_0 m=2560 k=6144
+      0.270 ms  FLASH_ATTN_EXT
+      0.239 ms  MUL_MAT q8_0 m=320 k=10240
+      0.203 ms  RMS_NORM_MUL
+      0.185 ms  MUL_MAT_VEC q8_0 m=10240 k=320
+      0.170 ms  MUL_MAT q8_0 m=2560 k=6144
+      0.130 ms  MUL_MAT_VEC q8_0 m=320 k=10240
+      0.112 ms  MUL_MAT f32 m=4 k=10240
+      0.084 ms  HC_POST_W
+      0.083 ms  MUL
+      0.074 ms  MUL_MAT_VEC f32 m=512 k=2560
+      0.072 ms  DSV4_HC_PRE
+      0.067 ms  CONCAT
+      0.060 ms  MUL_MAT_VEC q8_0 m=640 k=2560
+      0.055 ms  MUL_MAT_VEC q8_0 m=512 k=2560
+      0.048 ms  MULTI_ADD
+      0.042 ms  SIGMOID_MUL
+      0.038 ms  REPEAT
+      0.038 ms  GLU
+      0.036 ms  MUL_MAT_VEC q8_0 m=2560 k=640
+      0.029 ms  MUL_MAT q8_0 m=640 k=2560
+      0.028 ms  MUL_MAT f32 m=512 k=2560
+      0.025 ms  ROPE
+      0.025 ms  CONT
+      0.022 ms  MUL_MAT_VEC f32 m=4 k=10240
+      0.015 ms  MUL_MAT q8_0 m=2560 k=640
+      0.014 ms  TOPK_MOE_EARLY_SOFTMAX_NORM
+      0.014 ms  ADD
+      0.008 ms  SCALE
+      0.007 ms  ROPE_VIEW_SET_ROWS
+      0.007 ms  SILU
+      0.005 ms  MUL_MAT_VEC f32 m=1 k=2560
+      0.004 ms  SET_ROWS

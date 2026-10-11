@@ -1,0 +1,32 @@
+{
+ "prompt_file": "C:\\ArifiLabs\\cache\\mtp-x1-lane\\cells\\pgc-json.txt",
+ "path": "chat",
+ "regime": "greedy",
+ "sampling": {
+  "temperature": 0.0,
+  "top_k": 1
+ },
+ "ttft_ms": 519.6,
+ "wall_s": 13.04,
+ "timings": {
+  "cache_n": 0,
+  "prompt_n": 87,
+  "prompt_ms": 474.221,
+  "prompt_per_token_ms": 5.450816091954023,
+  "prompt_per_second": 183.45876711491056,
+  "predicted_n": 480,
+  "predicted_ms": 12522.72,
+  "predicted_per_token_ms": 26.143465553235906,
+  "predicted_per_second": 38.25047593494065,
+  "draft_n": 387,
+  "draft_n_accepted": 331
+ },
+ "tokens": null,
+ "content": "```json\n{\n  \"employees\": [\n    {\n      \"id\": 1001,\n      \"name\": \"Margaret Chen\",\n      \"title\": \"Chief Executive Officer\",\n      \"department\": \"Executive\",\n      \"start_date\": \"2015-03-12\",\n      \"skills\": [\"Strategy\", \"Leadership\", \"Fundraising\", \"Public Speaking\"],\n      \"manager_id\": null\n    },\n    {\n      \"id\": 1042,\n      \"name\": \"David Okonkwo\",\n      \"title\": \"VP of Engineering\",\n      \"department\": \"Engineering\",\n      \"start_date\": \"2017-08-24\",\n      \"skills\": [\"System Architecture\", \"Team Management\", \"Python\", \"AWS\"],\n      \"manager_id\": 1001\n    },\n    {\n      \"id\": 1187,\n      \"name\": \"Priya Sharma\",\n      \"title\": \"Senior Software Engineer\",\n      \"department\": \"Engineering\",\n      \"start_date\": \"2020-01-06\",\n      \"skills\": [\"JavaScript\", \"TypeScript\", \"React\", \"PostgreSQL\", \"CI/CD\"],\n      \"manager_id\": 1042\n    }\n  ]\n}\n```",
+ "draft_n": 387,
+ "draft_n_accepted": 331,
+ "reasoning_content": "The user wants me to return three employee records as one JSON object matching a specific schema. Let me create realistic employee data.\n\nSchema:\n```json\n{\n  \"employees\": [\n    {\n      \"id\": int,\n      \"name\": str,\n      \"title\": str,\n      \"department\": str,\n      \"start_date\": \"YYYY-MM-DD\",\n      \"skills\": [str],\n      \"manager_id\": int or null\n    }\n  ]\n}\n```\n\nLet me create three employees. I'll make the manager_id reference valid IDs or null for top-level executives.\n\nEmployee 1: CEO, no manager (null)\nEmployee 2: Engineering Manager, manager_id = 1\nEmployee 3: Software Engineer, manager_id = 2\n\nLet me build this out.\n",
+ "text_all": "The user wants me to return three employee records as one JSON object matching a specific schema. Let me create realistic employee data.\n\nSchema:\n```json\n{\n  \"employees\": [\n    {\n      \"id\": int,\n      \"name\": str,\n      \"title\": str,\n      \"department\": str,\n      \"start_date\": \"YYYY-MM-DD\",\n      \"skills\": [str],\n      \"manager_id\": int or null\n    }\n  ]\n}\n```\n\nLet me create three employees. I'll make the manager_id reference valid IDs or null for top-level executives.\n\nEmployee 1: CEO, no manager (null)\nEmployee 2: Engineering Manager, manager_id = 1\nEmployee 3: Software Engineer, manager_id = 2\n\nLet me build this out.\n\u001e```json\n{\n  \"employees\": [\n    {\n      \"id\": 1001,\n      \"name\": \"Margaret Chen\",\n      \"title\": \"Chief Executive Officer\",\n      \"department\": \"Executive\",\n      \"start_date\": \"2015-03-12\",\n      \"skills\": [\"Strategy\", \"Leadership\", \"Fundraising\", \"Public Speaking\"],\n      \"manager_id\": null\n    },\n    {\n      \"id\": 1042,\n      \"name\": \"David Okonkwo\",\n      \"title\": \"VP of Engineering\",\n      \"department\": \"Engineering\",\n      \"start_date\": \"2017-08-24\",\n      \"skills\": [\"System Architecture\", \"Team Management\", \"Python\", \"AWS\"],\n      \"manager_id\": 1001\n    },\n    {\n      \"id\": 1187,\n      \"name\": \"Priya Sharma\",\n      \"title\": \"Senior Software Engineer\",\n      \"department\": \"Engineering\",\n      \"start_date\": \"2020-01-06\",\n      \"skills\": [\"JavaScript\", \"TypeScript\", \"React\", \"PostgreSQL\", \"CI/CD\"],\n      \"manager_id\": 1042\n    }\n  ]\n}\n```",
+ "finish_reason": "stop",
+ "answer_reached": true
+}
