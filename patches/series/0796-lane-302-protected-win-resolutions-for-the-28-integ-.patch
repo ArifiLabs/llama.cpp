@@ -1,0 +1,589 @@
+From 26b648afa036dabd06291555663076117d71820b Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 8 Oct 2026 16:37:35 -0400
+Subject: [PATCH] lane-302: protected-win resolutions for the 28 integ wins the
+ shipping prefix f95422f397 touches
+
+Lane-branch only (HQ84 2026-10-08 15:0x, Q-302-r48a). Every row is adopt-union keyed to incoming f95422f397: lever 9 = default-OFF env-gated additions in ggml-vulkan.cpp / vulkan-shaders-gen.cpp (cell U OFF proof), lever 10 = dead-code removal in gather_setup (cells X, Y). The two cut anchors (iq3_s rows, iq2_s body) are the banner fprintf line re-added with ', ext %u'. Generator: cache/moe-gather-x1-lane/harness/pw_resolutions_r49.py.
+
+Origin: lane-302
+Measured-effect: UNMEASURED - bookkeeping rows; numbers on e03f35bb45/2644ba9c17 (cells/cellT-10070643, cells/cellU-10071120) and 33f8ae3037 (cells/cellX-10080605-read.json, cells/cellY-10081402-read.json)
+Lane: lane-302
+---
+ .../arifi-sync/protected-win-resolutions.json | 563 ++++++++++++++++++
+ 1 file changed, 563 insertions(+)
+
+diff --git a/tools/arifi-sync/protected-win-resolutions.json b/tools/arifi-sync/protected-win-resolutions.json
+index 12c1435217..2ec4673eff 100644
+--- a/tools/arifi-sync/protected-win-resolutions.json
++++ b/tools/arifi-sync/protected-win-resolutions.json
+@@ -1286,6 +1286,569 @@
+       ],
+       "decided_utc": "2026-10-08T18:50:00Z",
+       "decided_by": "lane-302 lead (Opus 5.5), write granted by HQ84 2026-10-08 06:3x (lane branch only)"
++    },
++    {
++      "win_id": "vulkan-concat-transpose-deltanet",
++      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
++        "ours": "integ 7156c61607 (this win as registered)",
++        "union": "lever 9 (e03f35bb45 + 2644ba9c17): default-OFF env-gated additions. In ggml-vulkan.cpp the range only ADDS moe_gather_ext_env() and two pipeline-creation blocks that run only when GGML_ARIFI_MOE_GATHER_EXT=1, and appends ', ext %u' to the gather banner fprintf; no existing line of this win's code changes"
++      },
++      "quality": "cell U default-OFF proof PASS on the lane binary: TBO 56/56 OK, plant RED 41 FAIL, byte harness 32/32 IDENT to gather-off, plant 16/16 DIFF; with the switch unset no lever-9 pipeline is created",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellU-10071120/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/prefix-diff-vulkan-cpp-r49.txt",
++        "commit:e03f35bb4573e8ce05f5937a49c74100334e7b7e",
++        "commit:2644ba9c1717c3ab79a4f65407d14685ae3ec6a1"
++      ],
++      "decided_utc": "2026-10-08T20:45:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), write granted by HQ84 2026-10-08 15:0x (Q-302-r48a, lane branch only)"
++    },
++    {
++      "win_id": "vulkan-tq-matvec-subgroup",
++      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
++        "ours": "integ 7156c61607 (this win as registered)",
++        "union": "lever 9 (e03f35bb45 + 2644ba9c17): default-OFF env-gated additions. In ggml-vulkan.cpp the range only ADDS moe_gather_ext_env() and two pipeline-creation blocks that run only when GGML_ARIFI_MOE_GATHER_EXT=1, and appends ', ext %u' to the gather banner fprintf; no existing line of this win's code changes"
++      },
++      "quality": "cell U default-OFF proof PASS on the lane binary: TBO 56/56 OK, plant RED 41 FAIL, byte harness 32/32 IDENT to gather-off, plant 16/16 DIFF; with the switch unset no lever-9 pipeline is created",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellU-10071120/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/prefix-diff-vulkan-cpp-r49.txt",
++        "commit:e03f35bb4573e8ce05f5937a49c74100334e7b7e",
++        "commit:2644ba9c1717c3ab79a4f65407d14685ae3ec6a1"
++      ],
++      "decided_utc": "2026-10-08T20:45:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), write granted by HQ84 2026-10-08 15:0x (Q-302-r48a, lane branch only)"
++    },
++    {
++      "win_id": "vulkan-escha-mm-column-block",
++      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
++        "ours": "integ 7156c61607 (this win as registered)",
++        "union": "lever 9 (e03f35bb45 + 2644ba9c17): default-OFF env-gated additions. In ggml-vulkan.cpp the range only ADDS moe_gather_ext_env() and two pipeline-creation blocks that run only when GGML_ARIFI_MOE_GATHER_EXT=1, and appends ', ext %u' to the gather banner fprintf; no existing line of this win's code changes"
++      },
++      "quality": "cell U default-OFF proof PASS on the lane binary: TBO 56/56 OK, plant RED 41 FAIL, byte harness 32/32 IDENT to gather-off, plant 16/16 DIFF; with the switch unset no lever-9 pipeline is created",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellU-10071120/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/prefix-diff-vulkan-cpp-r49.txt",
++        "commit:e03f35bb4573e8ce05f5937a49c74100334e7b7e",
++        "commit:2644ba9c1717c3ab79a4f65407d14685ae3ec6a1"
++      ],
++      "decided_utc": "2026-10-08T20:45:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), write granted by HQ84 2026-10-08 15:0x (Q-302-r48a, lane branch only)"
++    },
++    {
++      "win_id": "vulkan-iq4xs-matvec-dedicated",
++      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
++        "ours": "integ 7156c61607 (this win as registered)",
++        "union": "lever 9 in vulkan-shaders-gen.cpp: is_moe_gather_type() adds the legacy set and the q8_1 idg twin generation loops over is_mmvq_type() instead of iq4_nl only; it only ADDS idg_* SPIR-V variants, every pre-existing variant keeps its name, source and defines"
++      },
++      "quality": "cell U default-OFF proof PASS on the lane binary: TBO 56/56 OK, plant RED 41 FAIL, byte harness 32/32 IDENT to gather-off, plant 16/16 DIFF; with the switch unset no lever-9 pipeline is created",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellU-10071120/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/prefix-diff-vulkan-cpp-r49.txt",
++        "commit:e03f35bb4573e8ce05f5937a49c74100334e7b7e",
++        "commit:2644ba9c1717c3ab79a4f65407d14685ae3ec6a1"
++      ],
++      "decided_utc": "2026-10-08T20:45:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), write granted by HQ84 2026-10-08 15:0x (Q-302-r48a, lane branch only)"
++    },
++    {
++      "win_id": "vulkan-rocmfp4-fast-q8_1-mmvq",
++      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
++        "ours": "integ 7156c61607 (this win as registered)",
++        "union": "lever 9 (e03f35bb45 + 2644ba9c17): default-OFF env-gated additions. In ggml-vulkan.cpp the range only ADDS moe_gather_ext_env() and two pipeline-creation blocks that run only when GGML_ARIFI_MOE_GATHER_EXT=1, and appends ', ext %u' to the gather banner fprintf; no existing line of this win's code changes"
++      },
++      "quality": "cell U default-OFF proof PASS on the lane binary: TBO 56/56 OK, plant RED 41 FAIL, byte harness 32/32 IDENT to gather-off, plant 16/16 DIFF; with the switch unset no lever-9 pipeline is created",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellU-10071120/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/prefix-diff-vulkan-cpp-r49.txt",
++        "commit:e03f35bb4573e8ce05f5937a49c74100334e7b7e",
++        "commit:2644ba9c1717c3ab79a4f65407d14685ae3ec6a1"
++      ],
++      "decided_utc": "2026-10-08T20:45:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), write granted by HQ84 2026-10-08 15:0x (Q-302-r48a, lane branch only)"
++    },
++    {
++      "win_id": "vulkan-fa-dequant-kv-runtime-gate",
++      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
++        "ours": "integ 7156c61607 (this win as registered)",
++        "union": "lever 9 (e03f35bb45 + 2644ba9c17): default-OFF env-gated additions. In ggml-vulkan.cpp the range only ADDS moe_gather_ext_env() and two pipeline-creation blocks that run only when GGML_ARIFI_MOE_GATHER_EXT=1, and appends ', ext %u' to the gather banner fprintf; no existing line of this win's code changes"
++      },
++      "quality": "cell U default-OFF proof PASS on the lane binary: TBO 56/56 OK, plant RED 41 FAIL, byte harness 32/32 IDENT to gather-off, plant 16/16 DIFF; with the switch unset no lever-9 pipeline is created",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellU-10071120/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/prefix-diff-vulkan-cpp-r49.txt",
++        "commit:e03f35bb4573e8ce05f5937a49c74100334e7b7e",
++        "commit:2644ba9c1717c3ab79a4f65407d14685ae3ec6a1"
++      ],
++      "decided_utc": "2026-10-08T20:45:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), write granted by HQ84 2026-10-08 15:0x (Q-302-r48a, lane branch only)"
++    },
++    {
++      "win_id": "vulkan-rdna3-mmv-id-rows-switch",
++      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
++        "ours": "integ 7156c61607 (this win as registered)",
++        "union": "lever 9 (e03f35bb45 + 2644ba9c17): default-OFF env-gated additions. In ggml-vulkan.cpp the range only ADDS moe_gather_ext_env() and two pipeline-creation blocks that run only when GGML_ARIFI_MOE_GATHER_EXT=1, and appends ', ext %u' to the gather banner fprintf; no existing line of this win's code changes"
++      },
++      "quality": "cell U default-OFF proof PASS on the lane binary: TBO 56/56 OK, plant RED 41 FAIL, byte harness 32/32 IDENT to gather-off, plant 16/16 DIFF; with the switch unset no lever-9 pipeline is created",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellU-10071120/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/prefix-diff-vulkan-cpp-r49.txt",
++        "commit:e03f35bb4573e8ce05f5937a49c74100334e7b7e",
++        "commit:2644ba9c1717c3ab79a4f65407d14685ae3ec6a1"
++      ],
++      "decided_utc": "2026-10-08T20:45:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), write granted by HQ84 2026-10-08 15:0x (Q-302-r48a, lane branch only)"
++    },
++    {
++      "win_id": "vulkan-mul-mat-id-staging-receipt-hazard-assert",
++      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
++        "ours": "integ 7156c61607 (this win as registered)",
++        "union": "lever 9 (e03f35bb45 + 2644ba9c17): default-OFF env-gated additions. In ggml-vulkan.cpp the range only ADDS moe_gather_ext_env() and two pipeline-creation blocks that run only when GGML_ARIFI_MOE_GATHER_EXT=1, and appends ', ext %u' to the gather banner fprintf; no existing line of this win's code changes"
++      },
++      "quality": "cell U default-OFF proof PASS on the lane binary: TBO 56/56 OK, plant RED 41 FAIL, byte harness 32/32 IDENT to gather-off, plant 16/16 DIFF; with the switch unset no lever-9 pipeline is created",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellU-10071120/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/prefix-diff-vulkan-cpp-r49.txt",
++        "commit:e03f35bb4573e8ce05f5937a49c74100334e7b7e",
++        "commit:2644ba9c1717c3ab79a4f65407d14685ae3ec6a1"
++      ],
++      "decided_utc": "2026-10-08T20:45:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), write granted by HQ84 2026-10-08 15:0x (Q-302-r48a, lane branch only)"
++    },
++    {
++      "win_id": "vulkan-uma-read-path-probe",
++      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
++        "ours": "integ 7156c61607 (this win as registered)",
++        "union": "lever 9 (e03f35bb45 + 2644ba9c17): default-OFF env-gated additions. In ggml-vulkan.cpp the range only ADDS moe_gather_ext_env() and two pipeline-creation blocks that run only when GGML_ARIFI_MOE_GATHER_EXT=1, and appends ', ext %u' to the gather banner fprintf; no existing line of this win's code changes"
++      },
++      "quality": "cell U default-OFF proof PASS on the lane binary: TBO 56/56 OK, plant RED 41 FAIL, byte harness 32/32 IDENT to gather-off, plant 16/16 DIFF; with the switch unset no lever-9 pipeline is created",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellU-10071120/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/prefix-diff-vulkan-cpp-r49.txt",
++        "commit:e03f35bb4573e8ce05f5937a49c74100334e7b7e",
++        "commit:2644ba9c1717c3ab79a4f65407d14685ae3ec6a1"
++      ],
++      "decided_utc": "2026-10-08T20:45:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), write granted by HQ84 2026-10-08 15:0x (Q-302-r48a, lane branch only)"
++    },
++    {
++      "win_id": "vulkan-q5k-matvec-b-hoist-width-gate",
++      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
++        "ours": "integ 7156c61607 (this win as registered)",
++        "union": "lever 9 (e03f35bb45 + 2644ba9c17): default-OFF env-gated additions. In ggml-vulkan.cpp the range only ADDS moe_gather_ext_env() and two pipeline-creation blocks that run only when GGML_ARIFI_MOE_GATHER_EXT=1, and appends ', ext %u' to the gather banner fprintf; no existing line of this win's code changes"
++      },
++      "quality": "cell U default-OFF proof PASS on the lane binary: TBO 56/56 OK, plant RED 41 FAIL, byte harness 32/32 IDENT to gather-off, plant 16/16 DIFF; with the switch unset no lever-9 pipeline is created",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellU-10071120/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/prefix-diff-vulkan-cpp-r49.txt",
++        "commit:e03f35bb4573e8ce05f5937a49c74100334e7b7e",
++        "commit:2644ba9c1717c3ab79a4f65407d14685ae3ec6a1"
++      ],
++      "decided_utc": "2026-10-08T20:45:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), write granted by HQ84 2026-10-08 15:0x (Q-302-r48a, lane branch only)"
++    },
++    {
++      "win_id": "vulkan-mmvq-a-hoist-r48b-route",
++      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
++        "ours": "integ 7156c61607 (this win as registered)",
++        "union": "lever 9 (e03f35bb45 + 2644ba9c17): default-OFF env-gated additions. In ggml-vulkan.cpp the range only ADDS moe_gather_ext_env() and two pipeline-creation blocks that run only when GGML_ARIFI_MOE_GATHER_EXT=1, and appends ', ext %u' to the gather banner fprintf; no existing line of this win's code changes"
++      },
++      "quality": "cell U default-OFF proof PASS on the lane binary: TBO 56/56 OK, plant RED 41 FAIL, byte harness 32/32 IDENT to gather-off, plant 16/16 DIFF; with the switch unset no lever-9 pipeline is created",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellU-10071120/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/prefix-diff-vulkan-cpp-r49.txt",
++        "commit:e03f35bb4573e8ce05f5937a49c74100334e7b7e",
++        "commit:2644ba9c1717c3ab79a4f65407d14685ae3ec6a1"
++      ],
++      "decided_utc": "2026-10-08T20:45:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), write granted by HQ84 2026-10-08 15:0x (Q-302-r48a, lane branch only)"
++    },
++    {
++      "win_id": "vulkan-sx8-mulmm-packed-decode-and-mmq-under-coopmat",
++      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
++        "ours": "integ 7156c61607 (this win as registered)",
++        "union": "lever 9 (e03f35bb45 + 2644ba9c17): default-OFF env-gated additions. In ggml-vulkan.cpp the range only ADDS moe_gather_ext_env() and two pipeline-creation blocks that run only when GGML_ARIFI_MOE_GATHER_EXT=1, and appends ', ext %u' to the gather banner fprintf; no existing line of this win's code changes; lever 9 in vulkan-shaders-gen.cpp: is_moe_gather_type() adds the legacy set and the q8_1 idg twin generation loops over is_mmvq_type() instead of iq4_nl only; it only ADDS idg_* SPIR-V variants, every pre-existing variant keeps its name, source and defines"
++      },
++      "quality": "cell U default-OFF proof PASS on the lane binary: TBO 56/56 OK, plant RED 41 FAIL, byte harness 32/32 IDENT to gather-off, plant 16/16 DIFF; with the switch unset no lever-9 pipeline is created",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellU-10071120/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/prefix-diff-vulkan-cpp-r49.txt",
++        "commit:e03f35bb4573e8ce05f5937a49c74100334e7b7e",
++        "commit:2644ba9c1717c3ab79a4f65407d14685ae3ec6a1"
++      ],
++      "decided_utc": "2026-10-08T20:45:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), write granted by HQ84 2026-10-08 15:0x (Q-302-r48a, lane branch only)"
++    },
++    {
++      "win_id": "vulkan-mmv-admit-width-switch",
++      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
++        "ours": "integ 7156c61607 (this win as registered)",
++        "union": "lever 9 (e03f35bb45 + 2644ba9c17): default-OFF env-gated additions. In ggml-vulkan.cpp the range only ADDS moe_gather_ext_env() and two pipeline-creation blocks that run only when GGML_ARIFI_MOE_GATHER_EXT=1, and appends ', ext %u' to the gather banner fprintf; no existing line of this win's code changes"
++      },
++      "quality": "cell U default-OFF proof PASS on the lane binary: TBO 56/56 OK, plant RED 41 FAIL, byte harness 32/32 IDENT to gather-off, plant 16/16 DIFF; with the switch unset no lever-9 pipeline is created",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellU-10071120/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/prefix-diff-vulkan-cpp-r49.txt",
++        "commit:e03f35bb4573e8ce05f5937a49c74100334e7b7e",
++        "commit:2644ba9c1717c3ab79a4f65407d14685ae3ec6a1"
++      ],
++      "decided_utc": "2026-10-08T20:45:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), write granted by HQ84 2026-10-08 15:0x (Q-302-r48a, lane branch only)"
++    },
++    {
++      "win_id": "vulkan-mmvq-wide-rows-switch",
++      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
++        "ours": "integ 7156c61607 (this win as registered)",
++        "union": "lever 9 (e03f35bb45 + 2644ba9c17): default-OFF env-gated additions. In ggml-vulkan.cpp the range only ADDS moe_gather_ext_env() and two pipeline-creation blocks that run only when GGML_ARIFI_MOE_GATHER_EXT=1, and appends ', ext %u' to the gather banner fprintf; no existing line of this win's code changes"
++      },
++      "quality": "cell U default-OFF proof PASS on the lane binary: TBO 56/56 OK, plant RED 41 FAIL, byte harness 32/32 IDENT to gather-off, plant 16/16 DIFF; with the switch unset no lever-9 pipeline is created",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellU-10071120/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/prefix-diff-vulkan-cpp-r49.txt",
++        "commit:e03f35bb4573e8ce05f5937a49c74100334e7b7e",
++        "commit:2644ba9c1717c3ab79a4f65407d14685ae3ec6a1"
++      ],
++      "decided_utc": "2026-10-08T20:45:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), write granted by HQ84 2026-10-08 15:0x (Q-302-r48a, lane branch only)"
++    },
++    {
++      "win_id": "vulkan-q5k-mmvq-route-n5-8",
++      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
++        "ours": "integ 7156c61607 (this win as registered)",
++        "union": "lever 9 (e03f35bb45 + 2644ba9c17): default-OFF env-gated additions. In ggml-vulkan.cpp the range only ADDS moe_gather_ext_env() and two pipeline-creation blocks that run only when GGML_ARIFI_MOE_GATHER_EXT=1, and appends ', ext %u' to the gather banner fprintf; no existing line of this win's code changes"
++      },
++      "quality": "cell U default-OFF proof PASS on the lane binary: TBO 56/56 OK, plant RED 41 FAIL, byte harness 32/32 IDENT to gather-off, plant 16/16 DIFF; with the switch unset no lever-9 pipeline is created",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellU-10071120/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/prefix-diff-vulkan-cpp-r49.txt",
++        "commit:e03f35bb4573e8ce05f5937a49c74100334e7b7e",
++        "commit:2644ba9c1717c3ab79a4f65407d14685ae3ec6a1"
++      ],
++      "decided_utc": "2026-10-08T20:45:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), write granted by HQ84 2026-10-08 15:0x (Q-302-r48a, lane branch only)"
++    },
++    {
++      "win_id": "vulkan-iq3-matvec-sign-hoist-n7-rows",
++      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
++        "ours": "integ 7156c61607 (this win as registered)",
++        "union": "lever 9 (e03f35bb45 + 2644ba9c17): default-OFF env-gated additions. In ggml-vulkan.cpp the range only ADDS moe_gather_ext_env() and two pipeline-creation blocks that run only when GGML_ARIFI_MOE_GATHER_EXT=1, and appends ', ext %u' to the gather banner fprintf; no existing line of this win's code changes"
++      },
++      "quality": "cell U default-OFF proof PASS on the lane binary: TBO 56/56 OK, plant RED 41 FAIL, byte harness 32/32 IDENT to gather-off, plant 16/16 DIFF; with the switch unset no lever-9 pipeline is created",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellU-10071120/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/prefix-diff-vulkan-cpp-r49.txt",
++        "commit:e03f35bb4573e8ce05f5937a49c74100334e7b7e",
++        "commit:2644ba9c1717c3ab79a4f65407d14685ae3ec6a1"
++      ],
++      "decided_utc": "2026-10-08T20:45:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), write granted by HQ84 2026-10-08 15:0x (Q-302-r48a, lane branch only)"
++    },
++    {
++      "win_id": "vulkan-q6k-mmvq-route-n7-8",
++      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
++        "ours": "integ 7156c61607 (this win as registered)",
++        "union": "lever 9 (e03f35bb45 + 2644ba9c17): default-OFF env-gated additions. In ggml-vulkan.cpp the range only ADDS moe_gather_ext_env() and two pipeline-creation blocks that run only when GGML_ARIFI_MOE_GATHER_EXT=1, and appends ', ext %u' to the gather banner fprintf; no existing line of this win's code changes"
++      },
++      "quality": "cell U default-OFF proof PASS on the lane binary: TBO 56/56 OK, plant RED 41 FAIL, byte harness 32/32 IDENT to gather-off, plant 16/16 DIFF; with the switch unset no lever-9 pipeline is created",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellU-10071120/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/prefix-diff-vulkan-cpp-r49.txt",
++        "commit:e03f35bb4573e8ce05f5937a49c74100334e7b7e",
++        "commit:2644ba9c1717c3ab79a4f65407d14685ae3ec6a1"
++      ],
++      "decided_utc": "2026-10-08T20:45:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), write granted by HQ84 2026-10-08 15:0x (Q-302-r48a, lane branch only)"
++    },
++    {
++      "win_id": "vulkan-q4k-mmvq-w5-column-split",
++      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
++        "ours": "integ 7156c61607 (this win as registered)",
++        "union": "lever 9 (e03f35bb45 + 2644ba9c17): default-OFF env-gated additions. In ggml-vulkan.cpp the range only ADDS moe_gather_ext_env() and two pipeline-creation blocks that run only when GGML_ARIFI_MOE_GATHER_EXT=1, and appends ', ext %u' to the gather banner fprintf; no existing line of this win's code changes"
++      },
++      "quality": "cell U default-OFF proof PASS on the lane binary: TBO 56/56 OK, plant RED 41 FAIL, byte harness 32/32 IDENT to gather-off, plant 16/16 DIFF; with the switch unset no lever-9 pipeline is created",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellU-10071120/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/prefix-diff-vulkan-cpp-r49.txt",
++        "commit:e03f35bb4573e8ce05f5937a49c74100334e7b7e",
++        "commit:2644ba9c1717c3ab79a4f65407d14685ae3ec6a1"
++      ],
++      "decided_utc": "2026-10-08T20:45:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), write granted by HQ84 2026-10-08 15:0x (Q-302-r48a, lane branch only)"
++    },
++    {
++      "win_id": "vulkan-iq3s-matvec-n6-rows2",
++      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
++        "ours": "integ 7156c61607 (this win as registered)",
++        "union": "lever 9 (e03f35bb45 + 2644ba9c17): default-OFF env-gated additions. In ggml-vulkan.cpp the range only ADDS moe_gather_ext_env() and two pipeline-creation blocks that run only when GGML_ARIFI_MOE_GATHER_EXT=1, and appends ', ext %u' to the gather banner fprintf; no existing line of this win's code changes"
++      },
++      "quality": "cell U default-OFF proof PASS on the lane binary: TBO 56/56 OK, plant RED 41 FAIL, byte harness 32/32 IDENT to gather-off, plant 16/16 DIFF; with the switch unset no lever-9 pipeline is created",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellU-10071120/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/prefix-diff-vulkan-cpp-r49.txt",
++        "commit:e03f35bb4573e8ce05f5937a49c74100334e7b7e",
++        "commit:2644ba9c1717c3ab79a4f65407d14685ae3ec6a1"
++      ],
++      "decided_utc": "2026-10-08T20:45:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), write granted by HQ84 2026-10-08 15:0x (Q-302-r48a, lane branch only)"
++    },
++    {
++      "win_id": "vulkan-iq4xs-q8_1-mmvq-admit-table",
++      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
++        "ours": "integ 7156c61607 (this win as registered)",
++        "union": "lever 9 (e03f35bb45 + 2644ba9c17): default-OFF env-gated additions. In ggml-vulkan.cpp the range only ADDS moe_gather_ext_env() and two pipeline-creation blocks that run only when GGML_ARIFI_MOE_GATHER_EXT=1, and appends ', ext %u' to the gather banner fprintf; no existing line of this win's code changes"
++      },
++      "quality": "cell U default-OFF proof PASS on the lane binary: TBO 56/56 OK, plant RED 41 FAIL, byte harness 32/32 IDENT to gather-off, plant 16/16 DIFF; with the switch unset no lever-9 pipeline is created",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellU-10071120/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/prefix-diff-vulkan-cpp-r49.txt",
++        "commit:e03f35bb4573e8ce05f5937a49c74100334e7b7e",
++        "commit:2644ba9c1717c3ab79a4f65407d14685ae3ec6a1"
++      ],
++      "decided_utc": "2026-10-08T20:45:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), write granted by HQ84 2026-10-08 15:0x (Q-302-r48a, lane branch only)"
++    },
++    {
++      "win_id": "vulkan-cm1-width-rule-f16b-guard",
++      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
++        "ours": "integ 7156c61607 (this win as registered)",
++        "union": "lever 9 (e03f35bb45 + 2644ba9c17): default-OFF env-gated additions. In ggml-vulkan.cpp the range only ADDS moe_gather_ext_env() and two pipeline-creation blocks that run only when GGML_ARIFI_MOE_GATHER_EXT=1, and appends ', ext %u' to the gather banner fprintf; no existing line of this win's code changes"
++      },
++      "quality": "cell U default-OFF proof PASS on the lane binary: TBO 56/56 OK, plant RED 41 FAIL, byte harness 32/32 IDENT to gather-off, plant 16/16 DIFF; with the switch unset no lever-9 pipeline is created",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellU-10071120/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/prefix-diff-vulkan-cpp-r49.txt",
++        "commit:e03f35bb4573e8ce05f5937a49c74100334e7b7e",
++        "commit:2644ba9c1717c3ab79a4f65407d14685ae3ec6a1"
++      ],
++      "decided_utc": "2026-10-08T20:45:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), write granted by HQ84 2026-10-08 15:0x (Q-302-r48a, lane branch only)"
++    },
++    {
++      "win_id": "vulkan-fa-sparse-prefill-qsa",
++      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
++        "ours": "integ 7156c61607 (this win as registered)",
++        "union": "lever 9 (e03f35bb45 + 2644ba9c17): default-OFF env-gated additions. In ggml-vulkan.cpp the range only ADDS moe_gather_ext_env() and two pipeline-creation blocks that run only when GGML_ARIFI_MOE_GATHER_EXT=1, and appends ', ext %u' to the gather banner fprintf; no existing line of this win's code changes"
++      },
++      "quality": "cell U default-OFF proof PASS on the lane binary: TBO 56/56 OK, plant RED 41 FAIL, byte harness 32/32 IDENT to gather-off, plant 16/16 DIFF; with the switch unset no lever-9 pipeline is created",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellU-10071120/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/prefix-diff-vulkan-cpp-r49.txt",
++        "commit:e03f35bb4573e8ce05f5937a49c74100334e7b7e",
++        "commit:2644ba9c1717c3ab79a4f65407d14685ae3ec6a1"
++      ],
++      "decided_utc": "2026-10-08T20:45:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), write granted by HQ84 2026-10-08 15:0x (Q-302-r48a, lane branch only)"
++    },
++    {
++      "win_id": "vulkan-cm1-f16b-staging-mul-mat-id",
++      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
++        "ours": "integ 7156c61607 (this win as registered)",
++        "union": "lever 9 (e03f35bb45 + 2644ba9c17): default-OFF env-gated additions. In ggml-vulkan.cpp the range only ADDS moe_gather_ext_env() and two pipeline-creation blocks that run only when GGML_ARIFI_MOE_GATHER_EXT=1, and appends ', ext %u' to the gather banner fprintf; no existing line of this win's code changes"
++      },
++      "quality": "cell U default-OFF proof PASS on the lane binary: TBO 56/56 OK, plant RED 41 FAIL, byte harness 32/32 IDENT to gather-off, plant 16/16 DIFF; with the switch unset no lever-9 pipeline is created",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellU-10071120/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/prefix-diff-vulkan-cpp-r49.txt",
++        "commit:e03f35bb4573e8ce05f5937a49c74100334e7b7e",
++        "commit:2644ba9c1717c3ab79a4f65407d14685ae3ec6a1"
++      ],
++      "decided_utc": "2026-10-08T20:45:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), write granted by HQ84 2026-10-08 15:0x (Q-302-r48a, lane branch only)"
++    },
++    {
++      "win_id": "vulkan-moe-gather-slot-major-matvec-id",
++      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
++        "ours": "integ 7156c61607 (this win as registered)",
++        "union": "lever 9 (e03f35bb45 + 2644ba9c17): default-OFF env-gated additions. In ggml-vulkan.cpp the range only ADDS moe_gather_ext_env() and two pipeline-creation blocks that run only when GGML_ARIFI_MOE_GATHER_EXT=1, and appends ', ext %u' to the gather banner fprintf; no existing line of this win's code changes; lever 9 in vulkan-shaders-gen.cpp: is_moe_gather_type() adds the legacy set and the q8_1 idg twin generation loops over is_mmvq_type() instead of iq4_nl only; it only ADDS idg_* SPIR-V variants, every pre-existing variant keeps its name, source and defines; lever 10 (33f8ae3037): dead-code removal in gather_setup (mul_mat_vec_base.glsl): an early return at NUM_COLS == 1 with the same offsets, skipping the leader-rank scan whose result is unused at width 1"
++      },
++      "quality": "cell U default-OFF proof PASS on the lane binary: TBO 56/56 OK, plant RED 41 FAIL, byte harness 32/32 IDENT to gather-off, plant 16/16 DIFF; with the switch unset no lever-9 pipeline is created; cell X harness byte-identical to gather-off on five served types n1..n8 (TBO 40/40 OK, planted RED 37 FAIL); cell Y served greedy+sampled ids identical 80/80 vs integ 7156c61607",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellU-10071120/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/prefix-diff-vulkan-cpp-r49.txt",
++        "commit:e03f35bb4573e8ce05f5937a49c74100334e7b7e",
++        "commit:2644ba9c1717c3ab79a4f65407d14685ae3ec6a1",
++        "cache/moe-gather-x1-lane/cells/cellX-10080605-read.json",
++        "cache/moe-gather-x1-lane/cells/cellY-10081402-read.json",
++        "commit:33f8ae30373c5b79645d809d42a2adc4b717b9d0"
++      ],
++      "decided_utc": "2026-10-08T20:45:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), write granted by HQ84 2026-10-08 15:0x (Q-302-r48a, lane branch only)"
++    },
++    {
++      "win_id": "vulkan-moe-gather-iq3s-rows2",
++      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
++        "ours": "integ 7156c61607 (this win as registered)",
++        "union": "lever 9 (e03f35bb45 + 2644ba9c17): default-OFF env-gated additions. In ggml-vulkan.cpp the range only ADDS moe_gather_ext_env() and two pipeline-creation blocks that run only when GGML_ARIFI_MOE_GATHER_EXT=1, and appends ', ext %u' to the gather banner fprintf; no existing line of this win's code changes; anchor 'iq3_s rows' is cut only because the banner fprintf line is replaced by the same line with ', ext %u' appended; the anchor text is present on the + line"
++      },
++      "quality": "cell U default-OFF proof PASS on the lane binary: TBO 56/56 OK, plant RED 41 FAIL, byte harness 32/32 IDENT to gather-off, plant 16/16 DIFF; with the switch unset no lever-9 pipeline is created",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellU-10071120/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/prefix-diff-vulkan-cpp-r49.txt",
++        "commit:e03f35bb4573e8ce05f5937a49c74100334e7b7e",
++        "commit:2644ba9c1717c3ab79a4f65407d14685ae3ec6a1"
++      ],
++      "decided_utc": "2026-10-08T20:45:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), write granted by HQ84 2026-10-08 15:0x (Q-302-r48a, lane branch only)"
++    },
++    {
++      "win_id": "vulkan-moe-gather-iq2s-body5",
++      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
++        "ours": "integ 7156c61607 (this win as registered)",
++        "union": "lever 9 (e03f35bb45 + 2644ba9c17): default-OFF env-gated additions. In ggml-vulkan.cpp the range only ADDS moe_gather_ext_env() and two pipeline-creation blocks that run only when GGML_ARIFI_MOE_GATHER_EXT=1, and appends ', ext %u' to the gather banner fprintf; no existing line of this win's code changes; anchor 'iq2_s body' is cut only because the banner fprintf line is replaced by the same line with ', ext %u' appended; the anchor text is present on the + line"
++      },
++      "quality": "cell U default-OFF proof PASS on the lane binary: TBO 56/56 OK, plant RED 41 FAIL, byte harness 32/32 IDENT to gather-off, plant 16/16 DIFF; with the switch unset no lever-9 pipeline is created",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellU-10071120/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/prefix-diff-vulkan-cpp-r49.txt",
++        "commit:e03f35bb4573e8ce05f5937a49c74100334e7b7e",
++        "commit:2644ba9c1717c3ab79a4f65407d14685ae3ec6a1"
++      ],
++      "decided_utc": "2026-10-08T20:45:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), write granted by HQ84 2026-10-08 15:0x (Q-302-r48a, lane branch only)"
++    },
++    {
++      "win_id": "vulkan-qwen4exp-hc-post-w",
++      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
++        "ours": "integ 7156c61607 (this win as registered)",
++        "union": "lever 9 (e03f35bb45 + 2644ba9c17): default-OFF env-gated additions. In ggml-vulkan.cpp the range only ADDS moe_gather_ext_env() and two pipeline-creation blocks that run only when GGML_ARIFI_MOE_GATHER_EXT=1, and appends ', ext %u' to the gather banner fprintf; no existing line of this win's code changes"
++      },
++      "quality": "cell U default-OFF proof PASS on the lane binary: TBO 56/56 OK, plant RED 41 FAIL, byte harness 32/32 IDENT to gather-off, plant 16/16 DIFF; with the switch unset no lever-9 pipeline is created",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellU-10071120/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/prefix-diff-vulkan-cpp-r49.txt",
++        "commit:e03f35bb4573e8ce05f5937a49c74100334e7b7e",
++        "commit:2644ba9c1717c3ab79a4f65407d14685ae3ec6a1"
++      ],
++      "decided_utc": "2026-10-08T20:45:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), write granted by HQ84 2026-10-08 15:0x (Q-302-r48a, lane branch only)"
++    },
++    {
++      "win_id": "vulkan-qwen4exp-gdn-bank",
++      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
++        "ours": "integ 7156c61607 (this win as registered)",
++        "union": "lever 9 (e03f35bb45 + 2644ba9c17): default-OFF env-gated additions. In ggml-vulkan.cpp the range only ADDS moe_gather_ext_env() and two pipeline-creation blocks that run only when GGML_ARIFI_MOE_GATHER_EXT=1, and appends ', ext %u' to the gather banner fprintf; no existing line of this win's code changes; lever 9 in vulkan-shaders-gen.cpp: is_moe_gather_type() adds the legacy set and the q8_1 idg twin generation loops over is_mmvq_type() instead of iq4_nl only; it only ADDS idg_* SPIR-V variants, every pre-existing variant keeps its name, source and defines"
++      },
++      "quality": "cell U default-OFF proof PASS on the lane binary: TBO 56/56 OK, plant RED 41 FAIL, byte harness 32/32 IDENT to gather-off, plant 16/16 DIFF; with the switch unset no lever-9 pipeline is created",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellU-10071120/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/prefix-diff-vulkan-cpp-r49.txt",
++        "commit:e03f35bb4573e8ce05f5937a49c74100334e7b7e",
++        "commit:2644ba9c1717c3ab79a4f65407d14685ae3ec6a1"
++      ],
++      "decided_utc": "2026-10-08T20:45:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), write granted by HQ84 2026-10-08 15:0x (Q-302-r48a, lane branch only)"
+     }
+   ]
+ }

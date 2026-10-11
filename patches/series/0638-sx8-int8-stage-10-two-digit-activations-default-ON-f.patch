@@ -1,0 +1,44 @@
+From d83d1d103a24346dc870396fbd71db8f8e72640f Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 02:43:42 -0400
+Subject: [PATCH] sx8-int8 stage 10: two-digit activations default ON for
+ ffn_up (fix B)
+
+All four S-X8 roles stay int8. On Qwen3.8-27B-SX8 (16 wikitext chunks vs float S-X8 at f32 acc): one-digit
+everywhere fails the pre-registered PPL bound on one outlier token (+0.0141 +- 0.0061, max KLD 2.005); two-digit on
+ffn_up only passes KL 0.000301 / top-1 98.95% / PPL +0.0038 +- 0.0047, max KLD 0.026, pp512 92.6 vs 84.6 float
+(indication). GGML_ARIFI_SX8_CM1_2D=none restores one-digit everywhere, =all two-digit everywhere.
+
+Lane: sx8-int8-stage10-2026-10-02
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 82ae05b713..0d5e24ed7f 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -6122,7 +6122,12 @@ vk_device ggml_vk_get_device(size_t idx) {
+                 if (sxn != nullptr && *sxn) {
+                     device->sx8_cm1_min_n = (uint32_t) atoi(sxn);
+                 }
++                // stage 10 default: two-digit on ffn_up only (fix B: KL/top-1/PPL pass on the 27B, one-digit all-roles fails PPL
++                // on one outlier token, two-digit all-roles is slower than float). "none" = one-digit everywhere, "all" = every role.
+                 const char * sx2 = getenv("GGML_ARIFI_SX8_CM1_2D");
++                if (sx2 == nullptr) {
++                    sx2 = "ffn_up";
++                }
+                 for (const char * p = sx2; p != nullptr && *p; ) {
+                     const char * e = strchr(p, ',');
+                     const size_t n = e ? (size_t) (e - p) : strlen(p);
+@@ -6132,7 +6137,7 @@ vk_device ggml_vk_get_device(size_t idx) {
+                     p = e ? e + 1 : nullptr;
+                 }
+                 fprintf(stderr, "ggml_vulkan: S-X8 int8 cm1 roles: %s, min n: %u, two-digit roles: %s [GGML_ARIFI_SX8_CM1_ROLES / _MIN_N / _2D]\n",
+-                        sxr != nullptr ? sxr : "all", device->sx8_cm1_min_n, sx2 != nullptr ? sx2 : "none");
++                        sxr != nullptr ? sxr : "all", device->sx8_cm1_min_n, sx2);
+                 const char * f32a = getenv("GGML_ARIFI_F32ACC");
+                 for (const char * p = f32a; p != nullptr && *p; ) {
+                     const char * e = strchr(p, ',');

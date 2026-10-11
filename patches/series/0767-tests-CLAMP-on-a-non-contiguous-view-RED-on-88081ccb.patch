@@ -1,0 +1,69 @@
+From 5e345fe42a0e14bd48ac94b81009d371f492a149 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 17:40:18 -0400
+Subject: [PATCH] tests: CLAMP on a non-contiguous view (RED on 88081ccb8c)
+
+Adds a CLAMP case whose input is a strided 4-D view. The CPU reference indexed the view as
+contiguous, so any backend that clamps the view correctly (Vulkan uses the strided unary
+path) disagrees with the reference on the base.
+
+Taken-from: ggml-org/llama.cpp@65840ed53c (#29517), test part
+Origin: upstream-x1 lane PORT-SPEC P7
+Measured-effect: none (test only; RED/GREEN in MERGE-READY.md row P7)
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ tests/test-backend-ops.cpp | 26 +++++++++++++++++++++-----
+ 1 file changed, 21 insertions(+), 5 deletions(-)
+
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index 70edc786db..7975e11063 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -6545,19 +6545,34 @@ struct test_clamp : public test_case {
+     const std::array<int64_t, 4> ne;
+     float min;
+     float max;
++    int v; // view (1 : non-contiguous a)
+ 
+     std::string vars() override {
+-        return VARS_TO_STR4(type, ne, min, max);
++        return VARS_TO_STR5(type, ne, min, max, v);
+     }
+ 
+     test_clamp(ggml_type type = GGML_TYPE_F32,
+             std::array<int64_t, 4> ne = {10, 5, 4, 3},
+-            float min = -0.5f, float max = 0.5f)
+-        : type(type), ne(ne), min(min), max(max) {}
++            float min = -0.5f, float max = 0.5f, int v = 0)
++        : type(type), ne(ne), min(min), max(max), v(v) {}
+ 
+     ggml_tensor * build_graph(ggml_context * ctx) override {
+-        ggml_tensor * a = ggml_new_tensor(ctx, type, 4, ne.data());
+-        ggml_set_name(a, "a");
++        ggml_tensor * a;
++        if (v & 1) {
++            auto ne_a = ne;
++            ne_a[0] *= 3;
++            ne_a[1] *= 2;
++            ne_a[2] *= 5;
++            ne_a[3] *= 4;
++            a = ggml_new_tensor(ctx, type, 4, ne_a.data());
++            ggml_set_name(a, "a");
++
++            a = ggml_view_4d(ctx, a, ne[0], ne[1], ne[2], ne[3], a->nb[1], a->nb[2], a->nb[3], 0);
++            ggml_set_name(a, "view_of_a");
++        } else {
++            a = ggml_new_tensor(ctx, type, 4, ne.data());
++            ggml_set_name(a, "a");
++        }
+ 
+         ggml_tensor * out = ggml_clamp(ctx, a, min, max);
+         ggml_set_name(out, "out");
+@@ -12036,6 +12051,7 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+         test_cases.emplace_back(new test_sin       (type));
+         test_cases.emplace_back(new test_cos       (type));
+         test_cases.emplace_back(new test_clamp     (type));
++        test_cases.emplace_back(new test_clamp     (type, {10, 5, 4, 3}, -0.5f, 0.5f, 1));
+         test_cases.emplace_back(new test_leaky_relu(type));
+         test_cases.emplace_back(new test_floor     (type));
+         test_cases.emplace_back(new test_ceil      (type));

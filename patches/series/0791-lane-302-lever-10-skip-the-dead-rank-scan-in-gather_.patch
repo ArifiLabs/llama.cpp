@@ -1,0 +1,49 @@
+From a1cf80d732f813f3d473d5d8552fce99b6edddc9 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 17:23:50 -0400
+Subject: [PATCH] lane-302 lever 10: skip the dead rank scan in gather_setup at
+ width 1
+
+Cell W (cache/moe-gather-x1-lane/cells/cellW-10071710, RGP instruction timing, rgp_dump --event 3)
+showed every served gather pipeline running NUM_COLS=1 (the host default) and still executing the
+leader-rank loop `for s2 < s` in gather_setup(): 25 serial scalar iterations per wave, 10.8% of
+mul_mat_vec_idg_iq4_nl wave cost at n5 and 4.5% of idg_iq2_s. At width 1 the result is unused
+(rank & 0 is always 0), but the driver keeps the loop.
+
+At NUM_COLS == 1 gather_setup() now returns the slot's own expert and B/D offsets directly. They
+are the offsets the collect loop produced on its first iteration (s2 == s always matches its own
+expert), and a slot outside nslots still returns false, so the planted RED arm is unchanged. No
+arithmetic changes and no row-count dependence is added (lane 300): a row's result is the same
+code on the same data. Widths 2 and 4 keep the rank scan. One shared function, six shaders
+(mul_mat_vec, mul_mat_vecq, iq2_s, iq3_s, iq3_xxs, iq4_xs).
+
+Origin: lane-302
+Measured-effect: LOSSLESS-TIE served, op-level WIN. Op (cache/moe-gather-x1-lane/cells/cellX-10080605-read.json): n5 -5.17/-4.45%, n4 -2.04/-1.8%, n8 -5.15/-6.18%, n1 -2.4/-6.3%, n2 -2.29/+0.2%; gates 40/40 OK, planted RED. Served ABBA x2 vs integ 88081ccb8c at verify width 4 (cells/cellY-10081402-read.json): greedy mean -0.7% (one stalled round N1 r2 long 8.19 vs 15.3 t/s; others ~0), sampled (temp 0.7 seed 1234) mean +0.04%, greedy+sampled ids identical 80/80, acceptance identical
+Lane: lane-302
+---
+ .../ggml-vulkan/vulkan-shaders/mul_mat_vec_base.glsl | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_base.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_base.glsl
+index 9f4aade59a..0c30694b6c 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_base.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_base.glsl
+@@ -119,6 +119,18 @@ bool gather_setup() {
+     const uint s = gather_linear() % gl_NumWorkGroups.y;
+     const uint ts = s / p.nei0;
+     const int e = data_ids[(s - ts * p.nei0) + ts * p.nbi1];
++    // width 1: every slot leads its own column, so skip the rank scan (cellW-10071710 RGP: 25 serial
++    // iterations per wave, 10.8% of iq4_nl wave cost; the driver keeps the dead loop). Same offsets as below.
++    if (NUM_COLS == 1u) {
++        if (s >= p.expert_i1 * p.nei0) {
++            return false;
++        }
++        expert_id = uint(e);
++        gcol_b[0] = ((s - ts * p.nei0) % p.ne11) * p.stride_b + ts * p.batch_stride_b;
++        gcol_d[0] = (s - ts * p.nei0) * p.stride_d + ts * p.batch_stride_d;
++        gcols = 1;
++        return true;
++    }
+     uint rank = 0;
+     for (uint s2 = 0; s2 < s; ++s2) {
+         const uint t2 = s2 / p.nei0;

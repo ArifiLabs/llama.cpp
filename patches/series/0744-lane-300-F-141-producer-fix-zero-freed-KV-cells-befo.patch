@@ -1,0 +1,208 @@
+From d30be79c81d19141de275540867b9ba27f95605f Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 03:57:53 -0400
+Subject: [PATCH] lane-300: F-141 producer fix - zero freed KV cells before
+ they are read (LLAMA_ARIFI_KV_ZERO_FREED, default on)
+
+A freed KV cell keeps its K/V bytes. Masked reads of those bytes still move result bits (signed-zero products): cell 29 reproduced lane 298 r1m on the -fa off path (P-NF-2k / P-NF-B RED after seq_rm, P-NF-data GREEN with zeroed memory, carrier kqv-3 MUL_MAT). The coopmat FA path was fixed reader-side (dead-V staging); this fixes every reader at the producer.
+
+llama_kv_cache tracks v_dirty[stream][cell] (set on every apply_ubatch write, all-set on a cross-stream copy or a state restore, cleared by clear(data=true)). Before each ubatch, llama_kv_cache_context::apply zeroes the empty dirty cells inside [0, n_kv): one memset per (layer, K/V, contiguous run), or one set_2d per layer for the transposed (-fa off) V. Only cells the next graph reads are zeroed, so a rejected draft that the next verify batch overwrites costs nothing. A cache with history then reads like a fresh (allocation-cleared) cache. Not covered: the lane-188 exact tail ring and the QSA pooled indexer cache (llama-memory-hybrid-idx).
+
+LLAMA_ARIFI_KV_ZERO_FREED=0 restores merge-base behaviour (no zeroing; bookkeeping only).
+
+Origin: lane-300
+Measured-effect: OPT-IN after cell 31 (default 0 from the commit 'KV_ZERO_FREED default 1 -> 0'): -fa off history == fresh bit-equal, S-NF F-nondet 4 -> 0 (cells/c31p-10070726-*); served ids Z0 == I every load (c31q-10070739, c31o-10070746, c31o-10070901); cost QM pooled +0.45% (floor 0.87%), OO pooled -0.31% / -3.23% (floors 0.38% / 7.33%)
+---
+ src/llama-kv-cache.cpp | 97 ++++++++++++++++++++++++++++++++++++++++++
+ src/llama-kv-cache.h   | 13 ++++++
+ 2 files changed, 110 insertions(+)
+
+diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
+index 952c9aaa96..72b2a786e9 100644
+--- a/src/llama-kv-cache.cpp
++++ b/src/llama-kv-cache.cpp
+@@ -343,6 +343,8 @@ llama_kv_cache::llama_kv_cache(
+         v_cells[s].resize(kv_size);
+     }
+ 
++    v_dirty.assign(n_stream, std::vector<uint8_t>(kv_size, 0));
++
+     // by default, all sequence ids are mapped to the 0th stream
+     seq_to_stream.resize(LLAMA_MAX_SEQ, 0);
+ 
+@@ -816,7 +818,13 @@ void llama_kv_cache::clear(bool data) {
+         v_heads[s] = 0;
+     }
+ 
++    kv_zero_pending = !data;
++
+     if (data) {
++        for (auto & d : v_dirty) {
++            std::fill(d.begin(), d.end(), 0);
++        }
++
+         for (auto & [_, buf] : ctxs_bufs) {
+             ggml_backend_buffer_clear(buf.get(), 0);
+         }
+@@ -857,6 +865,8 @@ bool llama_kv_cache::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
+         p1 = std::numeric_limits<llama_pos>::max();
+     }
+ 
++    kv_zero_pending = true;
++
+     if (seq_id >= 0) {
+         auto & cells = v_cells[seq_to_stream[seq_id]];
+         auto & head  = v_heads[seq_to_stream[seq_id]];
+@@ -990,6 +1000,10 @@ void llama_kv_cache::seq_cp(llama_seq_id seq_id_src, llama_seq_id seq_id_dst, ll
+     sc_info.ssrc.push_back(s0);
+     sc_info.sdst.push_back(s1);
+ 
++    // the whole stream buffer is copied, stale bytes included
++    std::fill(v_dirty[s1].begin(), v_dirty[s1].end(), 1);
++    kv_zero_pending = true;
++
+     v_cells[s1].reset();
+     for (uint32_t i = 0; i < v_cells[s0].size(); ++i) {
+         if (v_cells[s0].seq_has(i, seq_id_src)) {
+@@ -1034,6 +1048,8 @@ void llama_kv_cache::seq_keep(llama_seq_id seq_id) {
+ 
+     GGML_ASSERT(seq_id >= 0 && (size_t) seq_id < seq_to_stream.size());
+ 
++    kv_zero_pending = true;
++
+     auto & cells = v_cells[seq_to_stream[seq_id]];
+     auto & head  = v_heads[seq_to_stream[seq_id]];
+ 
+@@ -1609,6 +1625,8 @@ void llama_kv_cache::apply_ubatch(const slot_info & sinfo, const llama_ubatch &
+ 
+             const auto idx = sinfo.idxs[s][ii];
+ 
++            v_dirty[sinfo.strm[s]][idx] = 1;
++
+             if (!cells.is_empty(idx)) {
+                 assert(cells.seq_count(idx) == 1);
+ 
+@@ -1765,6 +1783,80 @@ uint32_t llama_kv_cache::get_n_kv(const slot_info & sinfo) const {
+     return result;
+ }
+ 
++static bool llama_kv_zero_freed() {
++    static const bool on = [] {
++        const char * e = getenv("LLAMA_ARIFI_KV_ZERO_FREED");
++        return e == nullptr || atoi(e) != 0;
++    }();
++    return on;
++}
++
++void llama_kv_cache::zero_cells(uint32_t strm, uint32_t i0, uint32_t i1, std::vector<uint8_t> & zeros) const {
++    const uint32_t kv_size = get_size();
++
++    for (const auto & layer : layers) {
++        if (ggml_tensor * k = layer.k_stream.empty() ? nullptr : layer.k_stream[strm]) {
++            ggml_backend_tensor_memset(k, 0, i0*k->nb[1], (size_t) (i1 - i0)*k->nb[1]);
++        }
++
++        ggml_tensor * v = layer.v_stream.empty() ? nullptr : layer.v_stream[strm];
++        if (v == nullptr) {
++            continue;
++        }
++
++        if (!v_trans) {
++            ggml_backend_tensor_memset(v, 0, i0*v->nb[1], (size_t) (i1 - i0)*v->nb[1]);
++            continue;
++        }
++
++        // transposed V (no flash attention, f16/f32 only): cell i of embd row d sits at (d*kv_size + i)*esz
++        const size_t esz = ggml_type_size(v->type);
++        const size_t w   = (size_t) (i1 - i0)*esz;
++        if (zeros.size() < w) {
++            zeros.assign(w, 0);
++        }
++        ggml_backend_tensor_set_2d(v, zeros.data(), i0*esz, w, v->ne[0], kv_size*esz, 0);
++    }
++}
++
++void llama_kv_cache::zero_stale_cells(const slot_info & sinfo, uint32_t n_kv) {
++    if (!kv_zero_pending || other || model.hparams.no_alloc || !llama_kv_zero_freed()) {
++        return;
++    }
++
++    // ponytail: O(kv_size) scan per ubatch while a freed cell sits outside the read window; a min-index
++    // watermark if that ever shows in a profile
++    bool left = sinfo.n_stream() < n_stream;
++    std::vector<uint8_t> zeros;
++
++    for (uint32_t s = 0; s < sinfo.n_stream(); ++s) {
++        const uint32_t strm  = sinfo.strm[s];
++        const auto &   cells = v_cells[strm];
++        auto &         dirty = v_dirty[strm];
++
++        const uint32_t n = std::min<uint32_t>(n_kv, cells.size());
++
++        for (uint32_t i = 0; i < n; ) {
++            if (!dirty[i] || !cells.is_empty(i)) {
++                ++i;
++                continue;
++            }
++            uint32_t j = i;
++            while (j < n && dirty[j] && cells.is_empty(j)) {
++                dirty[j++] = 0;
++            }
++            zero_cells(strm, i, j, zeros);
++            i = j;
++        }
++
++        for (uint32_t i = n; i < cells.size() && !left; ++i) {
++            left = dirty[i] && cells.is_empty(i);
++        }
++    }
++
++    kv_zero_pending = left;
++}
++
+ 
+ //
+ // lane-188 - THE SHIPPING KV PRECISION TAIL (store-side).
+@@ -3936,6 +4028,10 @@ bool llama_kv_cache::state_read_meta(llama_io_read_i & io, uint32_t strm, uint32
+ bool llama_kv_cache::state_read_data(llama_io_read_i & io, uint32_t strm, uint32_t cell_count, const slot_info & sinfo) {
+     auto & cells = v_cells[strm];
+ 
++    // restored rows land where the meta says; mark the stream conservatively
++    std::fill(v_dirty[strm].begin(), v_dirty[strm].end(), 1);
++    kv_zero_pending = true;
++
+     // batch the scatter reads per contiguous run of destination indices
+     // from inclusive, to exclusive - same convention as cell_ranges_t
+     // contiguous cells yield a single run covering the whole block
+@@ -4260,6 +4356,7 @@ bool llama_kv_cache_context::apply() {
+ 
+     kv->apply_ubatch(sinfos[i_cur], ubatches[i_cur]);
+     n_kv = kv->get_n_kv(sinfos[i_cur]);
++    kv->zero_stale_cells(sinfos[i_cur], n_kv);
+ 
+     // InnerQ: check if CUDA calibration finalized and tensor needs update
+     if (kv->get_turbo_innerq_scale_inv() != nullptr && turbo_innerq_needs_tensor_update()) {
+diff --git a/src/llama-kv-cache.h b/src/llama-kv-cache.h
+index f874508b07..4252b201d1 100644
+--- a/src/llama-kv-cache.h
++++ b/src/llama-kv-cache.h
+@@ -390,6 +390,19 @@ private:
+     // note: this is not part of the KV state and it's only used to speed-up the find_slot() method
+     std::vector<uint32_t> v_heads;
+ 
++    // lane-300 F-141: a freed cell keeps its K/V bytes, and a masked read of them still moves result bits
++    // (signed-zero products). v_dirty[s][i] = cell i may hold non-zero bytes. Before each ubatch, empty dirty
++    // cells inside [0, n_kv) are zeroed, so a cache with history reads exactly like a fresh one.
++    // env LLAMA_ARIFI_KV_ZERO_FREED=0 disables it.
++    std::vector<std::vector<uint8_t>> v_dirty;
++    bool kv_zero_pending = false;
++
++    void zero_cells(uint32_t strm, uint32_t i0, uint32_t i1, std::vector<uint8_t> & zeros) const;
++
++public:
++    void zero_stale_cells(const slot_info & sinfo, uint32_t n_kv);
++
++private:
+     // TODO: temporary until we refactor to be able to share the same cells between 2 kv caches [TAG_KV_CACHE_SHARE_CELLS]
+     llama_kv_cache * other;
+ 

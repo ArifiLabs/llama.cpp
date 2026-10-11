@@ -1,0 +1,33 @@
+From 5f0354ba16b696ff8b55db7c4a71db7bbe6a165a Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 18 Aug 2026 22:14:41 -0400
+Subject: [PATCH] sources: advance remotes.upstream.pin 25ae3a9b3 -> 9d77fa172
+ (b10488) with its review
+
+base.upstream_sha and remotes.upstream.pin are ONE PAIR. The bump moved the base
+and left this field behind, which is the same class of split the _ref_comment
+warns about one field over. The review records the 7-commit surface (not the 18
+currency prints, which is pin..head), the exact-match tag verification, the zero
+FLAG-E marker hits over the whole bump diff, and WHY this row still reads BEHIND:
+currency compares against a head while everything else about upstream here is
+tag-shaped. A distance equal to b10488..upstream/master is current-at-the-tag.
+---
+ tools/arifi-sync/sources.json | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/tools/arifi-sync/sources.json b/tools/arifi-sync/sources.json
+index 84eea9593b..ea5adbe4ec 100644
+--- a/tools/arifi-sync/sources.json
++++ b/tools/arifi-sync/sources.json
+@@ -108,9 +108,10 @@
+     "upstream": {
+       "url": "https://github.com/ggml-org/llama.cpp",
+       "ref": "upstream/master",
+-      "pin": "25ae3a9b3",
++      "pin": "9d77fa172",
+       "role": "base engine and release tags",
+       "track_tags": true,
++      "pin_review_2026_08_18_lane156": "ADVANCED 25ae3a9b3 (b10481) -> 9d77fa172 (tag b10488) by lane-156's bump, and this pin moves TOGETHER with base.upstream_sha - they are ONE pair, and leaving this one behind is exactly the drift lane-152's `_ref_comment` warns about one field over. TAG VERIFIED BEFORE IT WAS WRITTEN: `git describe --tags --exact-match 9d77fa172` = b10488. THE REVIEW SURFACE IS SEVEN COMMITS, not the 18 `currency` printed: `git rev-list --count 25ae3a9b3..b10488` = 7; the 18 is pin..`upstream/master` (a HEAD), and 11 of those sit PAST the tag we take. All 7 read: 9d77fa172 (ci: OpenVINO 2026.3 + skip nemotron-h rollback test #27292), c0296022f (ci: Windows ARM64 CUDA in the manual workflow #27300), 7acdbb1f1 (mtmd: LFM2 image tiling threshold #27057), 1511ce3bc (sync: ggml), da786dc23 (ggml: bump version to 0.20.2), 27e345b57 (build: xcframework + cmake clean-up #27304), 8b8640097 (ci: pre-release change log in make-release #27302). The engine content is mtmd image tiling plus a cmake/vendor reorganisation; the rest is CI. FLAG E IS UNTOUCHED BY THE BUMP AND THAT IS MEASURED, NOT ASSUMED: a marker scan over the ENTIRE 25ae3a9b3..b10488 diff returns 0 hits for rocmfp / turbo / tq3 / q2_0_g128 / arifi in either case (evidence goal1-upstream-review-surface.txt). WHY THIS ROW WILL STILL READ `BEHIND` AND WHY THAT IS CORRECT: `currency` compares this pin against `upstream/master`, which is head-shaped, while everything else about upstream here is tag-shaped (`track_tags: true`, base.upstream_tag, and the engine-of-record directory name). A BEHIND distance EQUAL to `git rev-list --count b10488..upstream/master` is current-at-the-tag; only a LARGER distance means a NEWER TAG exists and real work is owed. At this writing that distance is 11.",
+       "pin_review_2026_08_18_lane152": "ADVANCED 4df29be4f -> 25ae3a9b3 (tag b10481) by the bump itself. 27 commits, reviewed in the only way that counts for a base: the whole 348-commit series was replayed onto it and every conflict it caused was resolved by hand. FOUR conflicts. ggml/src/ggml-cuda/mmvq.cu twice - b10481 IS the colliding commit (25ae3a9b3, 'CUDA: MMVQ nwarps=8 for bs=1 for dense models on DGX Spark'), which rewrote the ncols_dst==1 block into a compile-time tag-dispatch lambda; our entire contribution there is the allow_small_k gate and it moved onto that lambda's predicate. Plus an include-order collision (<limits> vs <type_traits>, both kept). conversion/qwen.py twice, and the finding there is worth more than the resolution: commit 671720924 COMMITS LITERAL CONFLICT MARKERS into a Python file and ac9a11875 deletes them again - a mid-history artifact, not a shipped defect (arifi/main's qwen.py parses, checked with ast.parse). ONE REAL BUILD BREAK, src/models/dflash.cpp:138: `ml->get_tensor_meta(\"d2t\")` does not compile here. I first blamed upstream and that attribution was WRONG - llama_model_base carries a member `llama_model_loader * ml` (src/llama-model.h line 767), so upstream's unnamed parameter is deliberate and `ml->` resolves to the member; the divergence is OURS, our signature names the parameter and shadows it. Fixed to `ml.`. NOT the head: upstream/master was 8b8640097, one commit past this tag, and that commit is a release-workflow CI change with no engine content - see base._base_moved_2026_08_18_lane152 for why the tag is the consistent choice. Build green, series check exit 0 over 331 patches with the replayed tree byte-identical outside the generated series. Proofs: research/local-inference/lane-evidence/2026-08-18-lane-152-currency-proofs/",
+       "pin_review": "HQ seat-33 2026-08-16: our 107 integration commits were rebased onto this exact commit and the result builds green, so the 281 commits from e9fa0781f are reviewed in the only way that counts - every conflict they caused was resolved by hand. Three conflicts total: the fork README, the Vulkan mul_mm store_a refactor, and repack.cpp's make_block_q1_0x4 insertion."
+     },

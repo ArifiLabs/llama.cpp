@@ -1,0 +1,27 @@
+From d1744b0d14758ce600fae41ef1a1963e943b8774 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 10 Oct 2026 11:21:27 -0400
+Subject: [PATCH] lane-302: amend vulkan-moe-gather-iq2s-body5 registration:
+ body 5 is the off-ramp since lever 13
+
+Its _registered line still said default ON (unset = 5); since lever 13 unset = body 6. Picked onto lane-298/v0132 by lane 298 relaunch-115 from lane 302's 39bf2cade6 (HQ87 10:5x); the sha in the text re-keyed 20aed36bcc -> db540a4c36 (the picked lever-13 default commit).
+
+Origin: lane-302
+Measured-effect: UNMEASURED (manifest bookkeeping, no code)
+---
+ tools/arifi-sync/protected-wins.json | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tools/arifi-sync/protected-wins.json b/tools/arifi-sync/protected-wins.json
+index c92262b52d..774d7779ff 100644
+--- a/tools/arifi-sync/protected-wins.json
++++ b/tools/arifi-sync/protected-wins.json
+@@ -1970,7 +1970,7 @@
+     {
+       "id": "vulkan-moe-gather-iq2s-body5",
+       "status": "active",
+-      "_registered": "2026-10-06, lane-302 (Opus 5.5). Route A levers 3+4 (IQ2_S gather shader body). Default ON (GGML_ARIFI_IQ2S_BODY unset = 5) from the flip commit (commit-msg-15).",
++      "_registered": "2026-10-06, lane-302 (Opus 5.5). Route A levers 3+4 (IQ2_S gather shader body). Default ON (GGML_ARIFI_IQ2S_BODY unset = 5) from the flip commit (commit-msg-15). AMENDED 2026-10-10 lane-302 relaunch-66: default ON 2026-10-06..2026-10-10 only; from lever 13 (ece2051b8c) unset = body 6 (vulkan-moe-gather-iq2s-body6-const-grid) and body 5 is the GGML_ARIFI_IQ2S_BODY=5 off-ramp.",
+       "mechanism": "mul_mat_vec_iq2_s.comp spec constant 3 on the IQ2_S MUL_MAT_ID gather pipeline: body 5 = int8 packed sign application ((g ^ 0xFF) + 1 per byte; iq2s grid bytes are never 0, so no -0) plus a batched LDS grid init (every thread loads its 16 table entries into registers, then stores; the ISA serialized global_load -> s_waitcnt vmcnt(0) chain drops from 16 to 2 waits). Same table, same LDS bytes, same arithmetic order: byte-identical. GGML_ARIFI_IQ2S_BODY=0 = legacy body; 1 = int8 body only; 4 = legacy body + batched init; 2 = diagnostic (skip init, wrong output); 3 = planted wrong arm.",
+       "commit": "88eeef9a0efe5b46c72eff2734c0c4356f25ff4c",
+       "also_commits": [

@@ -1,0 +1,48 @@
+From 4e0268dcd0cfc21f36ca289cc09cddcb7548d063 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 16:12:37 -0400
+Subject: [PATCH] arifi-sync: re-key the lever 11, Q1 and P26 registrations to
+ their v0132 re-pick shas
+
+The HQ86 12:32 re-pick moved lever 11 (81a7e0af7d -> 5598e8f221), lane 299 Q1
+(1b78a88413 -> c1e778f201) and P26 (a21b5b3ee0 -> 6040b1c74c) from the held
+branch lane-298/v0132-picks2-held onto v0132. Patch content is unchanged; only
+the three "commit" fields move.
+
+Origin: lane-298 (HQ86 2026-10-09 12:32 re-pick order)
+Measured-effect: UNMEASURED (manifest metadata only)
+---
+ tools/arifi-sync/protected-wins.json | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/tools/arifi-sync/protected-wins.json b/tools/arifi-sync/protected-wins.json
+index 91496d4da8..47f195d121 100644
+--- a/tools/arifi-sync/protected-wins.json
++++ b/tools/arifi-sync/protected-wins.json
+@@ -2399,7 +2399,7 @@
+       "status": "active",
+       "_registered": "2026-10-09, lane-302 relaunch-57 (Opus 5.5). Registered as an OPT-IN capability (HQ85 05:0x: stays default OFF; op win not shown at the pooled served wall). Protected so an incoming change cannot silently drop the switch. Re-keyed 2026-10-09 by lane 298 relaunch-102 (HQ85 Q71 ruling): commit = the pick of 04f6f9f218 onto lane-298/v0132, patch-id equal.",
+       "mechanism": "Spec constant 5 (ARIFI_NOUNROLL) of mul_mat_vec.comp in MUL_MAT_ID_GATHER builds, wired on the IQ4_NL idg pipeline only. GGML_ARIFI_MOE_NOUNROLL=1 sets both unrolled_iters to 0, so only the rolled K loop runs (same iter() calls, same order, byte-identical). At K = 640 (ffn_down) the unrolled blocks never execute but size the register allocation: cellZ-10082244 RGP idg_iq4_nl n5 VGPR 112 -> 64, occupancy 4 -> 8 of 16. Unset/0 = stock code; =2 = planted wrong arm (test only).",
+-      "commit": "81a7e0af7d7534e785a42718e711bdfe728c9919",
++      "commit": "9ff0b4689fd003b62188652791968675d7ef0c41",
+       "protected_paths": [
+         "ggml/src/ggml-vulkan/ggml-vulkan.cpp",
+         "ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec.comp"
+@@ -2425,7 +2425,7 @@
+       "status": "active",
+       "_registered": "2026-10-09, lane 298 relaunch-102 at the v0132 pick of lane 299 Q1 5acd125e21 (HQ85 07:3x pick order T1, Q0, Q1). Entry text from lane 299 MERGE-READY row Q1.",
+       "mechanism": "New device field mmvq_wide_rows_from_q8_0, read only by the Q8_0 q8_1 MMVQ pipeline (rm_int_n_q8_0). On AMD 0x150e (Radeon 890M) with the generic knob unset it is 8, so Q8_0 keeps its own rows at every NUM_COLS <= 8 instead of the inherited RDNA3 static 4-row shape at NUM_COLS >= 5. Rows only: bit-identical by construction. Every other device and type keeps the shipped pipeline.",
+-      "commit": "1b78a88413d0ef0ad563c1fab27dd040ed23cb15",
++      "commit": "b164ec401fa1f5a64b472bb7d271bed40fa08bd2",
+       "protected_paths": [
+         "ggml/src/ggml-vulkan/ggml-vulkan.cpp",
+         "ggml/src/ggml-vulkan/ggml-vulkan-types.h"
+@@ -2453,7 +2453,7 @@
+       "status": "active",
+       "_registered": "2026-10-09, lane 298 relaunch-102 at the v0132 pick of upstream-x1 P26 480d6a95ff (HQ85 07:2x relay of upstream-x1 ASK 2+3). A capability (loader) row: protects that upstream-converted qwen4exp MTP GGUFs keep loading.",
+       "mechanism": "LLM_TENSOR_NEXTN_HC_HEAD_{NORM,DOWN,UP} (blk.%d.nextn.hc_head_*) created for the qwen4exp MTP block (optional; our sidecar has none); the block's QSA indexer tensors acknowledged with TENSOR_SKIP; an MTP-only file no longer requires top-level output_hc_*. graph_mtp uses nextn.hc_head_* when present, else output_hc_*. No math change.",
+-      "commit": "a21b5b3ee0a73eca901de5cdaf5b68f2f1020ae6",
++      "commit": "2e24c2db8273533789d2f5c774a220b5650d0364",
+       "protected_paths": [
+         "src/llama-arch.cpp",
+         "src/llama-arch.h",

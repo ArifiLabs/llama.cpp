@@ -1,0 +1,113 @@
+From 3d50e253fc2e46dfbb5b8d77069184fc7073ccc9 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 08:08:49 -0400
+Subject: [PATCH] lane-298 item 5: drop the previous ubatch PLE row pages from
+ the working set (LLAMA_PLE_RELEASE=1)
+
+Strata --ple-io semantics in the smallest form: the lazy PLE table stays a file mapping and rows are gathered as before, but each ubatch VirtualUnlocks the prior ubatch row pages to standby, so the working set cannot grow with novel text. Opt-in until the novel-text cell run-pleio.ps1 rules; ids unchanged by construction. POSIX is a no-op (clean page cache).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Lane: lane-298
+(cherry picked from commit 98dc20263167ee6af6285fdfd511006f5abae326)
+
+Origin: ArifiLabs (native) - fork-authored (lane-298); no upstream origin exists.
+Measured-effect: UNMEASURED - no served number for this commit in the release ledger or the commit message
+---
+ src/llama-mmap.cpp      | 20 ++++++++++++++++++++
+ src/llama-mmap.h        |  4 ++++
+ src/models/qwen4exp.cpp | 26 ++++++++++++++++++++++++++
+ 3 files changed, 50 insertions(+)
+
+diff --git a/src/llama-mmap.cpp b/src/llama-mmap.cpp
+index 75063a7683..3c7d9848a3 100644
+--- a/src/llama-mmap.cpp
++++ b/src/llama-mmap.cpp
+@@ -849,6 +849,26 @@ void * llama_mmap::addr() const { return pimpl->addr; }
+ 
+ void llama_mmap::unmap_fragment(size_t first, size_t last) { pimpl->unmap_fragment(first, last); }
+ 
++bool llama_mmap::release_mapped_pages(const void * p, size_t n) {
++#ifdef _WIN32
++    MEMORY_BASIC_INFORMATION mbi;
++    if (n == 0 || VirtualQuery(p, &mbi, sizeof(mbi)) == 0 || mbi.Type != MEM_MAPPED) {
++        return false;
++    }
++    // outward to whole pages: a page shared with other rows only costs them a soft refault
++    const uintptr_t page  = 4096;
++    const uintptr_t first = (uintptr_t) p & ~(page - 1);
++    const uintptr_t last  = ((uintptr_t) p + n + page - 1) & ~(page - 1);
++    VirtualUnlock((void *) first, last - first); // FALSE + ERROR_NOT_LOCKED is the expected result
++    return true;
++#else
++    // ponytail: POSIX keeps clean file pages in the page cache, reclaimable; add madvise if RSS growth shows up
++    GGML_UNUSED(p);
++    GGML_UNUSED(n);
++    return false;
++#endif
++}
++
+ size_t llama_mmap::register_host(size_t first, size_t last, bool (*reg_fn)(void *, size_t), void (*unreg_fn)(void *)) {
+ #ifdef _POSIX_MAPPED_FILES
+     if (host_reg_addr || !reg_fn || !unreg_fn || last <= first) {
+diff --git a/src/llama-mmap.h b/src/llama-mmap.h
+index 5a36db884e..22095bca91 100644
+--- a/src/llama-mmap.h
++++ b/src/llama-mmap.h
+@@ -55,6 +55,10 @@ struct llama_mmap {
+ 
+     void unmap_fragment(size_t first, size_t last);
+ 
++    // lane-298 item 5: drop the pages holding [p, p+n) from the working set (they stay mapped and refault
++    // softly from standby). Returns false, doing nothing, if p is not in a file mapping or the OS has no such call.
++    static bool release_mapped_pages(const void * p, size_t n);
++
+     // pin the pages backing [first, last) with a backend allocator for faster H2D copies,
+     // unpinned in the destructor before the pages are unmapped
+     // returns the number of bytes registered, 0 on failure
+diff --git a/src/models/qwen4exp.cpp b/src/models/qwen4exp.cpp
+index c5a0310f52..c2f6eddde0 100644
+--- a/src/models/qwen4exp.cpp
++++ b/src/models/qwen4exp.cpp
+@@ -2,9 +2,12 @@
+ #include "llama-impl.h"
+ #include "llama-memory-hybrid-idx.h"
+ #include "llama-memory-recurrent.h"
++#include "llama-mmap.h"
+ 
+ #include <algorithm>
+ #include <cinttypes>
++#include <cstdlib>
++#include <string>
+ 
+ // bad metadata must be catchable: GGML_ASSERT aborts the whole process
+ static void qwen4exp_require_nonzero(const llama_model_loader & ml, llm_kv kid, uint32_t value) {
+@@ -1210,6 +1213,29 @@ void llm_graph_input_ple::set_input(const llama_ubatch * ubatch) {
+     }
+ 
+     ggml_backend_tensor_set(rows, idx.data(), 0, idx.size()*ggml_element_size(rows));
++
++    // lane-298 item 5 (Strata --ple-io semantics, smallest form): the lazy PLE table is a file mapping, and on Windows
++    // every gathered row page stays in the working set. Drop the PREVIOUS ubatch's row pages (its gather has run;
++    // a straggling read would only soft-refault). LLAMA_PLE_RELEASE=1 opts in until the novel-text cell rules.
++    // ponytail: one process-wide pending list (one PLE model per process); per-context state if that changes.
++    static const bool release = getenv("LLAMA_PLE_RELEASE") != nullptr && std::string(getenv("LLAMA_PLE_RELEASE")) != "0";
++    static std::vector<int32_t> pending;
++    static bool mapped = true;
++    const ggml_tensor * tab = pmodel.per_layer_tok_embd;
++    if (release && mapped && tab && tab->data && ggml_backend_buffer_is_host(tab->buffer)) {
++        for (const int32_t r : pending) {
++            if (!llama_mmap::release_mapped_pages((const char *) tab->data + (size_t) r * tab->nb[1], tab->nb[1])) {
++                mapped = false; // not a file mapping (or no OS call): never try again
++                LLAMA_LOG_WARN("%s: PLE release off: table is not a file mapping\n", __func__);
++                break;
++            }
++        }
++        if (mapped && !pending.empty()) {
++            static bool said = false;
++            if (!said) { said = true; LLAMA_LOG_INFO("%s: PLE release on: %zu row pages dropped per ubatch\n", __func__, pending.size()); }
++        }
++        pending.assign(idx.begin(), idx.end());
++    }
+ }
+ 
+ // Read a conv history out of its own recurrent row and write the new tail back.

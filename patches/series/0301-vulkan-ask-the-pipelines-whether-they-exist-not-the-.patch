@@ -1,0 +1,137 @@
+From 7e79fcf323e803da613e73752bd16ffc5f4e2eba Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 17 Aug 2026 19:19:27 -0400
+Subject: [PATCH] vulkan: ask the pipelines whether they exist, not the type id
+ (SET_ROWS + CPY)
+
+supports_op listed the six ROCmFP types for SET_ROWS and for both CPY quant
+directions. No pipeline was ever created for any of them: the SET_ROWS macro and
+the two cpy quant tables in ggml_vk_load_shaders are hand-written lists, and
+vulkan-shaders-gen.cpp emits their SPIR-V from a second hand-written list at
+lines 889 and 897. Neither list carries a rocmfp name. supports_op therefore
+promised the scheduler ops the backend cannot run, and ggml_vk_op_f32 aborted on
+the null pipeline at ggml-vulkan.cpp:12299 instead of letting the op fall to CPU.
+
+CPU can run them: type_traits_cpu carries from_float for all six.
+
+The SET_ROWS destination whitelist is now the pipeline table itself. The two CPY
+quant switches keep their case labels but return the table lookup. This also
+fixes TURBO3_0, whose copy-to-quant shader is deliberately not generated while
+supports_op still claimed f32 to turbo3_0.
+
+Same lesson as 9755b2946, one op family further along.
+
+Evidence: research/local-inference/lane-evidence/2026-08-17-lane-146-setrows-proofs/
+  A1-RED-setrows-abort.txt, A2-RED-cpy-abort.txt (before, abort at 12299)
+  B1-GREEN-setrows.txt, B2-GREEN-cpy.txt (after, OK; rocmfp cells not supported)
+
+Assisted-by: Claude Opus 5
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 59 +++++++++++++++-------------
+ 1 file changed, 31 insertions(+), 28 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 89fca13dd7..c25f96f88a 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -15563,6 +15563,24 @@ static ggml_backend_t ggml_backend_vk_device_init(ggml_backend_dev_t dev, const
+     return ggml_backend_vk_init(ctx->device);
+ }
+ 
++// A type listed in a supports_op switch says only that the type is ALLOWED there. It is not
++// evidence that anybody created its pipelines. set_rows and the two copy-to/from-quant tables are
++// hand-written lists in ggml_vk_load_shaders, and vulkan-shaders-gen.cpp emits their SPIR-V from a
++// second hand-written list; the six ROCmFP types were added to supports_op when the dequant and
++// mat-vec shaders were ported, and are in NEITHER list. supports_op then promised the scheduler
++// ops the backend cannot run, and ggml_vk_op_f32 aborted on the null pipeline instead of letting
++// the scheduler place them on CPU (where from_float exists for every one of these types).
++// Same lesson as 9755b2946, one op family further along: whether a pipeline exists is a question
++// only the pipelines can answer. These tables are created unconditionally, so a null slot means
++// "never created", not "not created on this device".
++static bool ggml_vk_have_set_rows_pipeline(const vk_device & device, ggml_type src_type, ggml_type idx_type, ggml_type dst_type) {
++    const int src_idx = (src_type == GGML_TYPE_F16) ? 1 : 0;
++    if (idx_type == GGML_TYPE_I64) {
++        return device->pipeline_set_rows_i64[src_idx][dst_type] != nullptr;
++    }
++    return device->pipeline_set_rows_i32[src_idx][dst_type] != nullptr;
++}
++
+ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggml_tensor * op) {
+     ggml_backend_vk_device_context * ctx = (ggml_backend_vk_device_context *)dev->context;
+     const vk_device& device = ggml_vk_get_device(ctx->device);
+@@ -15870,32 +15888,10 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+                     && (op->src[0]->ne[0] % 128 != 0)) {
+                     return false;
+                 }
+-                switch (op->type) {
+-                    case GGML_TYPE_F32:
+-                    case GGML_TYPE_F16:
+-                    case GGML_TYPE_BF16:
+-                    case GGML_TYPE_Q1_0:
+-                    case GGML_TYPE_Q2_0:
+-                    case GGML_TYPE_Q2_0_G128:
+-                    case GGML_TYPE_Q4_0_ROCMFP4:
+-                    case GGML_TYPE_Q4_0_ROCMFP4_FAST:
+-                    case GGML_TYPE_Q2_0_ROCMFPX:
+-                    case GGML_TYPE_Q3_0_ROCMFPX:
+-                    case GGML_TYPE_Q6_0_ROCMFPX:
+-                    case GGML_TYPE_Q8_0_ROCMFPX:
+-                    case GGML_TYPE_Q4_0:
+-                    case GGML_TYPE_Q4_1:
+-                    case GGML_TYPE_Q5_0:
+-                    case GGML_TYPE_Q5_1:
+-                    case GGML_TYPE_Q8_0:
+-                    case GGML_TYPE_IQ4_NL:
+-                    case GGML_TYPE_TURBO2_0:
+-                    case GGML_TYPE_TURBO3_0:
+-                    case GGML_TYPE_TURBO4_0:
+-                        return true;
+-                    default:
+-                        return false;
+-                }
++                // The destination whitelist that used to live here is exactly the SET_ROWS(...)
++                // macro's type list in ggml_vk_load_shaders, kept in sync by hand. It drifted:
++                // six ROCmFP types were listed here with no pipeline behind them. Ask the table.
++                return ggml_vk_have_set_rows_pipeline(device, op->src[0]->type, op->src[1]->type, op->type);
+             }
+         case GGML_OP_CONT:
+         case GGML_OP_CPY:
+@@ -15909,6 +15905,11 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+                     case GGML_TYPE_F32:
+                     case GGML_TYPE_F16:
+                     case GGML_TYPE_BF16:
++                        return true;
++                    // Quantized destinations all run pipeline_cpy_f32_quant. That table is a
++                    // hand-written list; this switch was a second one, and they disagreed for the
++                    // six ROCmFP types (never generated: vulkan-shaders-gen.cpp) and for TURBO3_0
++                    // (deliberately generated copy-FROM only). Ask the table, not the type id.
+                     case GGML_TYPE_Q1_0:
+                     case GGML_TYPE_Q2_0:
+                     case GGML_TYPE_Q2_0_G128:
+@@ -15925,7 +15926,7 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+                     case GGML_TYPE_Q8_0:
+                     case GGML_TYPE_IQ4_NL:
+                     case GGML_TYPE_TURBO3_0:
+-                        return true;
++                        return device->pipeline_cpy_f32_quant[src1_type] != nullptr;
+                     default:
+                         break;
+                     }
+@@ -15934,6 +15935,8 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+                     switch (src0_type) {
+                     case GGML_TYPE_F16:
+                     case GGML_TYPE_BF16:
++                        return true;
++                    // Quantized sources all run pipeline_cpy_quant_f32; same hand-list drift.
+                     case GGML_TYPE_Q1_0:
+                     case GGML_TYPE_Q2_0:
+                     case GGML_TYPE_Q2_0_G128:
+@@ -15950,7 +15953,7 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+                     case GGML_TYPE_Q8_0:
+                     case GGML_TYPE_IQ4_NL:
+                     case GGML_TYPE_TURBO3_0:
+-                        return true;
++                        return device->pipeline_cpy_quant_f32[src0_type] != nullptr;
+                     default:
+                         break;
+                     }

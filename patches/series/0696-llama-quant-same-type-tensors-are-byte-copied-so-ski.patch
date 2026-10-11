@@ -1,0 +1,30 @@
+From ef3bf7b8502e5347abbcc435a004c29854fc5b44 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 11:08:12 -0400
+Subject: [PATCH] llama-quant: same-type tensors are byte-copied, so skip the
+ imatrix guard for them (lets --tensor-type-file pin quantized tensors to
+ their current type while requantizing others)
+
+(cherry picked from commit 21880b7a085a65303926fea6fe195358ca6b343d)
+
+Origin: ArifiLabs (native) - fork-authored (x1i post-ship work); no upstream origin exists.
+Measured-effect: UNMEASURED on its own - supporting commit; see release ledger Table 1 W18, the number sits on that win's main commit
+---
+ src/llama-quant.cpp | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/src/llama-quant.cpp b/src/llama-quant.cpp
+index 19af54250a..90b888c13b 100644
+--- a/src/llama-quant.cpp
++++ b/src/llama-quant.cpp
+@@ -1139,7 +1139,9 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
+             metadata[i].target_type = tensor->type;
+         }
+ 
+-        metadata[i].requires_imatrix = tensor_requires_imatrix(tensor->name, metadata[i].target_type, ftype);
++        // a same-type tensor is byte-copied below (quantize = cur_type != new_type), so it never needs an imatrix
++        metadata[i].requires_imatrix = metadata[i].target_type != tensor->type &&
++            tensor_requires_imatrix(tensor->name, metadata[i].target_type, ftype);
+ 
+         if (params->imatrix) {
+             metadata[i].remapped_imatrix_name = remap_imatrix(tensor->name, mapped);

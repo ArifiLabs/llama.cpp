@@ -1,0 +1,204 @@
+From af73bce98365fd80452c6800fccdc423837c4741 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 19:42:27 -0400
+Subject: [PATCH] llama : preserve original batch order for speculative
+ decoding layer inputs
+
+With several sequences in one batch the ubatch split reorders tokens by sequence, and the captured layer inputs
+(DFlash) and unmasked NextN rows (MTP target, DFlash2 drafter) came back in ubatch order, not batch order: at
+-np > 1 a drafter read another slot's hidden rows. Each ubatch now records its original batch indices and
+output_reorder puts layer-input and unmasked NextN rows back in batch order; masked NextN rows keep the logits
+output mapping. Clean apply.
+
+Ours on top: llama_context::encode clears embd_batch_idxs after it writes embd_nextn. Our fork-default legacy
+DFlash injection (protected win spec-dflash-fused-inject-switch, LLAMA_DFLASH_FUSED_INJECT unset) reads the
+encoder rows through llama_get_embeddings_nextn after llama_encode; encode rows are already in batch order, and
+a reorder left pending by an earlier decode on the same context must not permute them. Upstream's fused path
+never reads rows after encode, so upstream does not need this. At -np 1 the batch indices are the identity, so
+the served single-slot lines compute the same rows as before.
+
+Taken-from: ggml-org/llama.cpp@4453b535fd (#29019)
+Measured-effect: CORRECTNESS ONLY, SPEED UNMEASURED - not yet measured; owed = -np 1 DFlash2 and MTP greedy ids identical vs integ, -np 2 DFlash2 acceptance per slot vs integ (upstream removed its regression test before merge).
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/llama-batch.cpp   |  1 +
+ src/llama-batch.h     |  1 +
+ src/llama-context.cpp | 55 +++++++++++++++++++++++++++++++++----------
+ src/llama-context.h   |  3 ++-
+ 4 files changed, 46 insertions(+), 14 deletions(-)
+
+diff --git a/src/llama-batch.cpp b/src/llama-batch.cpp
+index 59da8bdc4c..35d2b841ac 100644
+--- a/src/llama-batch.cpp
++++ b/src/llama-batch.cpp
+@@ -800,6 +800,7 @@ llama_ubatch llama_batch_allocr::ubatch_add(const std::vector<int32_t> & idxs, u
+     udata->seq_idx   .resize(LLAMA_MAX_SEQ, -1);
+     udata->output    .resize(n_tokens);
+ 
++    udata->batch_idxs = idxs;
+     udata->seq_id_data.reserve(n_tokens);
+ 
+     seq_set_t seq_set_unq;
+diff --git a/src/llama-batch.h b/src/llama-batch.h
+index 8529cb3bbc..b828f8d65f 100644
+--- a/src/llama-batch.h
++++ b/src/llama-batch.h
+@@ -62,6 +62,7 @@ struct llama_ubatch {
+         std::vector<llama_seq_id>   seq_id_unq;
+         std::vector<int32_t>        seq_idx;
+         std::vector<int8_t>         output;
++        std::vector<int32_t>        batch_idxs;  // original batch index for each token
+ 
+         std::vector<llama_seq_id> seq_id_data;
+     };
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index 23c843b0fc..c71ac2b028 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -2053,6 +2053,7 @@ int llama_context::encode(const llama_batch_ext & batch_inp) {
+         const uint32_t n_embd = hparams.n_embd_out();
+         GGML_ASSERT(n_tokens*n_embd <= (int64_t) embd_nextn.size);
+         ggml_backend_tensor_get_async(backend_h, t_h_nextn, embd_nextn.data, 0, n_tokens*n_embd*sizeof(float));
++        embd_batch_idxs.clear(); // encode rows are already in batch order; drop a decode's pending reorder (legacy DFlash inject reads these)
+     }
+ 
+     // TODO: hacky solution
+@@ -2226,6 +2227,7 @@ int llama_context::decode(const llama_batch_ext & batch_inp) {
+     n_queued_tokens += n_tokens_all;
+ 
+     output_swaps.clear();
++    embd_batch_idxs.clear();
+ 
+     sched_reserve();
+ 
+@@ -2437,7 +2439,8 @@ int llama_context::decode(const llama_batch_ext & batch_inp) {
+             }
+         }
+ 
+-        extract_layer_inputs(res, n_tokens_prev, ubatch.n_tokens);
++        // [TAG_EXTRACT_TARGET_EMBEDDINGS]
++        bool extract_all_idxs = extract_layer_inputs(res, n_tokens_prev, ubatch.n_tokens);
+ 
+         // extract nextn embeddings before
+         // only meaningful in LLAMA_POOLING_TYPE_NONE (per-token); other pooling modes are ignored.
+@@ -2455,9 +2458,17 @@ int llama_context::decode(const llama_batch_ext & batch_inp) {
+ 
+                 GGML_ASSERT((offset + n_rows)*n_embd <= (int64_t) embd_nextn.size);
+                 ggml_backend_tensor_get_async(backend_h, t_h_nextn, embd_nextn_out, 0, n_rows*n_embd*sizeof(float));
++                extract_all_idxs = extract_all_idxs || !masked;
+             }
+         }
+ 
++        if (extract_all_idxs) {
++            GGML_ASSERT(ubatch.data && ubatch.data->batch_idxs.size() == ubatch.n_tokens);
++            GGML_ASSERT(embd_batch_idxs.size() == (size_t) n_tokens_prev);
++            const auto & batch_idxs = ubatch.data->batch_idxs;
++            embd_batch_idxs.insert(embd_batch_idxs.end(), batch_idxs.begin(), batch_idxs.end());
++        }
++
+         if (has_samplers) {
+             const auto stride = n_vocab;
+ 
+@@ -2764,7 +2775,8 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
+     return n_outputs_max;
+ }
+ 
+-void llama_context::extract_layer_inputs(const llm_graph_result * res, size_t token_offset, size_t n_tokens) {
++bool llama_context::extract_layer_inputs(const llm_graph_result * res, size_t token_offset, size_t n_tokens) {
++    bool extracted = false;
+     for (uint32_t il = 0; il < cparams.embeddings_layer_inp.size(); ++il) {
+         if (!cparams.embeddings_layer_inp[il]) {
+             continue;
+@@ -2783,13 +2795,17 @@ void llama_context::extract_layer_inputs(const llm_graph_result * res, size_t to
+         GGML_ASSERT(nfloats % n_tokens == 0);
+ 
+         const size_t row_floats = nfloats / n_tokens;
++        GGML_ASSERT(row_floats == model.hparams.n_embd);
+         const size_t dst_offset = token_offset * row_floats;
+         GGML_ASSERT(dst_offset + nfloats <= embd_layer_inp[il].size);
+ 
+         ggml_backend_t backend = ggml_backend_sched_get_tensor_backend(sched.get(), t);
+         GGML_ASSERT(backend != nullptr);
++        // Tensor-split backends require a zero source offset.
+         ggml_backend_tensor_get_async(backend, t, embd_layer_inp[il].data + dst_offset, 0, nbytes);
++        extracted = true;
+     }
++    return extracted;
+ }
+ 
+ void llama_context::output_reorder() {
+@@ -2813,22 +2829,12 @@ void llama_context::output_reorder() {
+             }
+         }
+ 
+-        if (embd_nextn.size > 0) {
++        if (embd_nextn.size > 0 && cparams.embeddings_nextn_masked) {
+             for (uint64_t k = 0; k < n_embd_out; k++) {
+                 std::swap(embd_nextn.data[i0*n_embd_out + k], embd_nextn.data[i1*n_embd_out + k]);
+             }
+         }
+ 
+-        if (embd_layer_inp.size() > 0) {
+-            for (int lid = 0; lid < (int) embd_layer_inp.size(); ++lid) {
+-                if (embd_layer_inp[lid].size > 0) {
+-                    for (uint64_t k = 0; k < n_embd; ++k) {
+-                        std::swap(embd_layer_inp[lid].data[i0*n_embd + k], embd_layer_inp[lid].data[i1*n_embd + k]);
+-                    }
+-                }
+-            }
+-        }
+-
+         if (!sampling.samplers.empty()) {
+             assert(sampling.logits.size > 0);
+             assert(sampling.probs.size > 0);
+@@ -2858,6 +2864,29 @@ void llama_context::output_reorder() {
+     }
+ 
+     output_swaps.clear();
++
++    // [TAG_EXTRACT_TARGET_EMBEDDINGS]
++    // Layer inputs and unmasked NextN embeddings contain all token rows, independent of logits selection.
++    for (size_t i = 0; i < embd_batch_idxs.size(); ++i) {
++        while (embd_batch_idxs[i] != (int32_t) i) {
++            const int32_t j = embd_batch_idxs[i];
++            GGML_ASSERT(j >= 0 && (size_t) j < embd_batch_idxs.size());
++            if (embd_nextn.has_data() && !cparams.embeddings_nextn_masked) {
++                for (size_t k = 0; k < n_embd_out; ++k) {
++                    std::swap(embd_nextn.data[i*n_embd_out + k], embd_nextn.data[j*n_embd_out + k]);
++                }
++            }
++            for (auto & layer : embd_layer_inp) {
++                if (layer.has_data()) {
++                    for (size_t k = 0; k < n_embd; ++k) {
++                        std::swap(layer.data[i*n_embd + k], layer.data[j*n_embd + k]);
++                    }
++                }
++            }
++            std::swap(embd_batch_idxs[i], embd_batch_idxs[j]);
++        }
++    }
++    embd_batch_idxs.clear();
+ }
+ 
+ //
+diff --git a/src/llama-context.h b/src/llama-context.h
+index c47fc7306a..51f85ee81c 100644
+--- a/src/llama-context.h
++++ b/src/llama-context.h
+@@ -254,7 +254,7 @@ private:
+ 
+     // async-copy enabled layer-input tensors (per cparams.output_layer_inp)
+     // from backend into host-side embd_layer_inp buffers
+-    void extract_layer_inputs(const llm_graph_result * res, size_t token_offset, size_t n_tokens);
++    bool extract_layer_inputs(const llm_graph_result * res, size_t token_offset, size_t n_tokens);
+ 
+     //
+     // graph
+@@ -327,6 +327,7 @@ private:
+     // host buffers for output layer input embeddings, per layer
+     // populated when cparams.output_layer_inp[il] is true
+     std::vector<buffer_view<float>> embd_layer_inp;
++    std::vector<int32_t> embd_batch_idxs; // extracted index -> original batch index
+ 
+     struct sampling_info {
+         // !samplers.empty() to check if any samplers are active

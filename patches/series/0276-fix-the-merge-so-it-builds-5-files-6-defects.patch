@@ -1,0 +1,323 @@
+From e1c069a2800c63f1791e635481b0566ef750f5e6 Mon Sep 17 00:00:00 2001
+From: hq <arifilabs@users.noreply.github.com>
+Date: Sat, 15 Aug 2026 21:40:14 -0400
+Subject: [PATCH] fix the merge so it builds: 5 files, 6 defects
+
+Found by compiling, in order:
+
+vulkan-shaders-gen.cpp - drop turbo3_0 from the non-SET_ROWS copy_to_quant emission list. The
+fork's own comment two lines below says that variant is omitted because the plain quantize() path
+lacks the WHT transform. The merge kept the comment and the standalone copy-from-quant line but
+left turbo3_0 in the loop.
+
+ggml-vulkan.cpp - remove the pipeline registration for cpy_f32_turbo3_0, which referenced a shader
+that is now never generated. Comment left at the site so it is not "fixed" back in.
+
+models.h / mtmd-image.cpp - Muse Glimmer landed three times: clip_graph_muse_glimmer,
+muse_glimmer_grid_size and the preprocessor were each defined 3x. All copies byte-identical, kept
+one of each. The duplicate came from one commit being emitted into several patch layers.
+
+server-context.cpp - two definitions of server_prepare_shared_draft_devices coexisted, one
+returning the new config struct and one returning bool. Overload resolution chose the bool one
+because the call site passes a non-const reference. Removed the superseded version.
+
+server-context.cpp - prompt_checkpoint_restored had landed as a READ only. Four other sites were
+missing: the declaration, the clear in reset(), the has_checkpoint_restored_prompt predicate with
+its guard in the generating pass, the set on restore, and the clear after batching. Declaring the
+field alone would have compiled clean and left the guard permanently false, silently disabling the
+restored-checkpoint protection. A partial merge that builds is the dangerous shape.
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp |   5 +-
+ tools/mtmd/models/models.h           |   9 ---
+ tools/mtmd/mtmd-image.cpp            | 113 ---------------------------
+ tools/server/server-context.cpp      |  77 ++++--------------
+ 4 files changed, 18 insertions(+), 186 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index e3cbbddbfb..08c7dd8944 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -3420,7 +3420,10 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+     ggml_vk_create_pipeline(device, device->pipeline_cpy_f32_quant[GGML_TYPE_Q5_1], "cpy_f32_q5_1", cpy_f32_q5_1_len, cpy_f32_q5_1_data, "main", 2, sizeof(vk_op_unary_push_constants), {32, 1, 1}, {}, 1);
+     ggml_vk_create_pipeline(device, device->pipeline_cpy_f32_quant[GGML_TYPE_Q8_0], "cpy_f32_q8_0", cpy_f32_q8_0_len, cpy_f32_q8_0_data, "main", 2, sizeof(vk_op_unary_push_constants), {32, 1, 1}, {}, 1);
+     ggml_vk_create_pipeline(device, device->pipeline_cpy_f32_quant[GGML_TYPE_IQ4_NL], "cpy_f32_iq4_nl", cpy_f32_iq4_nl_len, cpy_f32_iq4_nl_data, "main", 2, sizeof(vk_op_unary_push_constants), {32, 1, 1}, {}, 1);
+-    ggml_vk_create_pipeline(device, device->pipeline_cpy_f32_quant[GGML_TYPE_TURBO3_0], "cpy_f32_turbo3_0", cpy_f32_turbo3_0_len, cpy_f32_turbo3_0_data, "main", 2, sizeof(vk_op_unary_push_constants), {32, 1, 1}, {}, 1);
++    // TURBO3_0 has no non-SET_ROWS copy-to-quant pipeline: the plain quantize() path in
++    // copy_to_quant.comp lacks the Walsh-Hadamard transform the format requires, so the fork emits
++    // only its copy-FROM-quant variant. Registering it here referenced a shader that is never
++    // generated. The copy-TO direction for this type goes through set_rows.
+ 
+ #define SET_ROWS(src_idx, src, itype) \
+         ggml_vk_create_pipeline(device, device->pipeline_set_rows ## itype [src_idx][GGML_TYPE_F32],  "set_rows_" #src "_f32" #itype,  set_rows_ ## src ## _f32 ## itype ## _len,  set_rows_ ## src ## _f32 ## itype ## _data,  "main", 3, sizeof(vk_op_binary_push_constants), {1, 1, 1}, {1}, 1, true); \
+diff --git a/tools/mtmd/models/models.h b/tools/mtmd/models/models.h
+index ff7f024790..8636f41303 100644
+--- a/tools/mtmd/models/models.h
++++ b/tools/mtmd/models/models.h
+@@ -445,12 +445,3 @@ struct clip_graph_muse_glimmer : clip_graph {
+     ggml_cgraph * build() override;
+ };
+ 
+-struct clip_graph_muse_glimmer : clip_graph {
+-    clip_graph_muse_glimmer(clip_ctx * ctx, const clip_image_f32 & img) : clip_graph(ctx, img) {}
+-    ggml_cgraph * build() override;
+-};
+-
+-struct clip_graph_muse_glimmer : clip_graph {
+-    clip_graph_muse_glimmer(clip_ctx * ctx, const clip_image_f32 & img) : clip_graph(ctx, img) {}
+-    ggml_cgraph * build() override;
+-};
+diff --git a/tools/mtmd/mtmd-image.cpp b/tools/mtmd/mtmd-image.cpp
+index ced5b278c8..07a671a67e 100644
+--- a/tools/mtmd/mtmd-image.cpp
++++ b/tools/mtmd/mtmd-image.cpp
+@@ -1747,121 +1747,8 @@ mtmd_image_preproc_out mtmd_image_preprocessor_muse_glimmer::preprocess(const cl
+ //
+ 
+ // Replicates transformers' get_aspect_ratio_preserving_size
+-static clip_image_size muse_glimmer_grid_size(int img_w, int img_h, int patch_hw, int max_tokens) {
+-    double i_nph = (double) img_h / patch_hw;
+-    double i_npw = (double) img_w / patch_hw;
+-    const double ratio = i_nph > 0.0 ? i_npw / i_nph : 1.0;
+-    if (i_nph * i_npw > (double) max_tokens) {
+-        i_nph = std::sqrt((double) max_tokens / ratio);
+-        i_npw = i_nph * ratio;
+-    }
+-    const int hs[2] = { (int) std::floor(i_nph), (int) std::ceil(i_nph) };
+-    const int ws[2] = { (int) std::floor(i_npw), (int) std::ceil(i_npw) };
+-    const double target_ar = (double) img_h / (double) img_w;
+-    int    best_nph = -1;
+-    int    best_npw = -1;
+-    double best_d   = 0.0;
+-    for (int a = 0; a < 2; ++a) {
+-        for (int b = 0; b < 2; ++b) {
+-            const int nph = hs[a];
+-            const int npw = ws[b];
+-            if (nph < 1 || npw < 1 || nph * npw > max_tokens) {
+-                continue;
+-            }
+-            const double d = std::fabs((double) nph / (double) npw - target_ar);
+-            const int n_tokens      = nph * npw;
+-            const int best_n_tokens = best_nph * best_npw;
+-            if (best_nph < 0 || d < best_d || (d == best_d && n_tokens > best_n_tokens)) {
+-                best_nph = nph;
+-                best_npw = npw;
+-                best_d   = d;
+-            }
+-        }
+-    }
+-    if (best_nph < 0) { // no candidate fit under the cap: round and clamp
+-        best_nph = std::max(1, (int) std::lround(i_nph));
+-        best_npw = std::max(1, (int) std::lround(i_npw));
+-    }
+-    return clip_image_size{ best_npw * patch_hw, best_nph * patch_hw };
+-}
+-
+-mtmd_image_preproc_out mtmd_image_preprocessor_muse_glimmer::preprocess(const clip_image_u8 & img) {
+-    const int patch_hw   = hparams.patch_size * hparams.n_merge;
+-    const int patch_area = hparams.patch_size * hparams.patch_size * hparams.n_merge * hparams.n_merge;
+-    GGML_ASSERT(patch_area > 0 && hparams.image_max_pixels > 0);
+-    const int max_tokens = hparams.image_max_pixels / patch_area;
+-
+-    const clip_image_size original_size = img.get_size();
+-    const clip_image_size target_size   = muse_glimmer_grid_size(
+-        original_size.width, original_size.height, patch_hw, max_tokens);
+-
+-    // PIL resizes directly to (target_w, target_h) -- a stretch, no padding.
+-    clip_image_u8 resized_image;
+-    img_tool::resize(img, resized_image, target_size, hparams.image_resize_algo, PAD_NONE);
+-
+-    mtmd_image_preproc_out output;
+-    output.append(hparams, resized_image, true);
+-    return output;
+-}
+-
+ //
+ // mtmd_image_preprocessor_muse_glimmer
+ //
+ 
+ // Replicates transformers' get_aspect_ratio_preserving_size
+-static clip_image_size muse_glimmer_grid_size(int img_w, int img_h, int patch_hw, int max_tokens) {
+-    double i_nph = (double) img_h / patch_hw;
+-    double i_npw = (double) img_w / patch_hw;
+-    const double ratio = i_nph > 0.0 ? i_npw / i_nph : 1.0;
+-    if (i_nph * i_npw > (double) max_tokens) {
+-        i_nph = std::sqrt((double) max_tokens / ratio);
+-        i_npw = i_nph * ratio;
+-    }
+-    const int hs[2] = { (int) std::floor(i_nph), (int) std::ceil(i_nph) };
+-    const int ws[2] = { (int) std::floor(i_npw), (int) std::ceil(i_npw) };
+-    const double target_ar = (double) img_h / (double) img_w;
+-    int    best_nph = -1;
+-    int    best_npw = -1;
+-    double best_d   = 0.0;
+-    for (int a = 0; a < 2; ++a) {
+-        for (int b = 0; b < 2; ++b) {
+-            const int nph = hs[a];
+-            const int npw = ws[b];
+-            if (nph < 1 || npw < 1 || nph * npw > max_tokens) {
+-                continue;
+-            }
+-            const double d = std::fabs((double) nph / (double) npw - target_ar);
+-            const int n_tokens      = nph * npw;
+-            const int best_n_tokens = best_nph * best_npw;
+-            if (best_nph < 0 || d < best_d || (d == best_d && n_tokens > best_n_tokens)) {
+-                best_nph = nph;
+-                best_npw = npw;
+-                best_d   = d;
+-            }
+-        }
+-    }
+-    if (best_nph < 0) { // no candidate fit under the cap: round and clamp
+-        best_nph = std::max(1, (int) std::lround(i_nph));
+-        best_npw = std::max(1, (int) std::lround(i_npw));
+-    }
+-    return clip_image_size{ best_npw * patch_hw, best_nph * patch_hw };
+-}
+-
+-mtmd_image_preproc_out mtmd_image_preprocessor_muse_glimmer::preprocess(const clip_image_u8 & img) {
+-    const int patch_hw   = hparams.patch_size * hparams.n_merge;
+-    const int patch_area = hparams.patch_size * hparams.patch_size * hparams.n_merge * hparams.n_merge;
+-    GGML_ASSERT(patch_area > 0 && hparams.image_max_pixels > 0);
+-    const int max_tokens = hparams.image_max_pixels / patch_area;
+-
+-    const clip_image_size original_size = img.get_size();
+-    const clip_image_size target_size   = muse_glimmer_grid_size(
+-        original_size.width, original_size.height, patch_hw, max_tokens);
+-
+-    // PIL resizes directly to (target_w, target_h) -- a stretch, no padding.
+-    clip_image_u8 resized_image;
+-    img_tool::resize(img, resized_image, target_size, hparams.image_resize_algo, PAD_NONE);
+-
+-    mtmd_image_preproc_out output;
+-    output.append(hparams, resized_image, true);
+-    return output;
+-}
+diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
+index 6c05702eaf..f7046afe90 100644
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -273,69 +273,6 @@ static std::vector<llama_token> server_sample_and_accept_synth(
+     return result;
+ }
+ 
+-static bool server_prepare_shared_draft_devices(common_params & params) {
+-    const auto & types = params.speculative.types;
+-    const bool has_shared_draft =
+-        std::find(types.begin(), types.end(), COMMON_SPECULATIVE_TYPE_DRAFT_DFLASH) != types.end() ||
+-        std::find(types.begin(), types.end(), COMMON_SPECULATIVE_TYPE_DRAFT_DSPARK) != types.end();
+-    if (!has_shared_draft || !params.speculative.draft.devices.empty()) {
+-        return false;
+-    }
+-
+-    std::vector<ggml_backend_dev_t> devices;
+-    if (!params.devices.empty()) {
+-        for (ggml_backend_dev_t device : params.devices) {
+-            if (device == nullptr) {
+-                break;
+-            }
+-            devices.push_back(device);
+-        }
+-    } else {
+-        for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
+-            ggml_backend_dev_t device = ggml_backend_dev_get(i);
+-            const enum ggml_backend_dev_type type = ggml_backend_dev_type(device);
+-            if (type == GGML_BACKEND_DEVICE_TYPE_GPU || type == GGML_BACKEND_DEVICE_TYPE_IGPU) {
+-                devices.push_back(device);
+-            }
+-        }
+-    }
+-
+-    if (devices.empty()) {
+-        return false;
+-    }
+-
+-    size_t target_primary = 0;
+-    if (params.split_mode == LLAMA_SPLIT_MODE_NONE && params.main_gpu >= 0 && (size_t)params.main_gpu < devices.size()) {
+-        target_primary = params.main_gpu;
+-    }
+-
+-    size_t draft_primary = target_primary;
+-    size_t draft_free = 0;
+-    for (size_t i = 0; i < devices.size(); i++) {
+-        if (devices.size() > 1 && i == target_primary) {
+-            continue;
+-        }
+-        size_t free = 0;
+-        size_t total = 0;
+-        ggml_backend_dev_memory(devices[i], &free, &total);
+-        if (draft_primary == target_primary || free > draft_free) {
+-            draft_primary = i;
+-            draft_free = free;
+-        }
+-    }
+-
+-    params.speculative.draft.devices.push_back(devices[draft_primary]);
+-    for (size_t i = 0; i < devices.size(); i++) {
+-        if (i != draft_primary) {
+-            params.speculative.draft.devices.push_back(devices[i]);
+-        }
+-    }
+-    params.speculative.draft.devices.push_back(nullptr);
+-
+-    SRV_INF("[spec] auto-selected %s as the primary draft device\n", ggml_backend_dev_name(devices[draft_primary]));
+-    return true;
+-}
+-
+ // state diagram: https://github.com/ggml-org/llama.cpp/pull/9283
+ enum slot_state {
+     SLOT_STATE_IDLE,
+@@ -526,6 +463,9 @@ struct server_slot {
+     bool has_next_token = true;
+     bool has_new_line   = false;
+     bool truncated      = false;
++    // set when a prompt checkpoint was restored this iteration; the batch builder
++    // must not append more prompt tokens on top of a restored state
++    bool prompt_checkpoint_restored = false;
+ 
+     stop_type stop;
+ 
+@@ -615,6 +555,7 @@ struct server_slot {
+         generated_text = "";
+         has_new_line   = false;
+         truncated      = false;
++        prompt_checkpoint_restored = false;
+         stop           = STOP_TYPE_NONE;
+         stopping_word  = "";
+         n_sent_text    = 0;
+@@ -3260,12 +3201,20 @@ private:
+         std::vector<server_slot *> generating;
+         std::vector<server_slot *> drafting;
+ 
++        const bool has_checkpoint_restored_prompt = std::any_of(slots.begin(), slots.end(), [](const server_slot & slot) {
++            return slot.prompt_checkpoint_restored && slot.state == SLOT_STATE_PROCESSING_PROMPT;
++        });
++
+         // determine which slots are generating and drafting
+         iterate(slots, [&](server_slot & slot) {
+             if (slot.state != SLOT_STATE_GENERATING) {
+                 return;
+             }
+ 
++            if (has_checkpoint_restored_prompt) {
++                return;
++            }
++
+             // check if we can batch this slot with the previous one
+             if (!slot_batched) {
+                 slot_batched = &slot;
+@@ -3653,6 +3602,7 @@ private:
+ 
+                                         pos_next = std::min(pos_next, std::max(it->pos_min + 1, it->pos_max));
+                                         n_past   = std::min(slot.prompt.tokens.size_up_to_pos(pos_next), (size_t) it->n_tokens);
++                                        slot.prompt_checkpoint_restored = true;
+                                         SLT_TRC(slot, "restored context checkpoint (pos_min = %d, pos_max = %d, n_tokens = %" PRId64 ", n_past = %d, size = %.3f MiB)\n", it->pos_min, it->pos_max, it->n_tokens, n_past, (float) it->size() / 1024 / 1024);
+                                     }
+ 
+@@ -3883,6 +3833,7 @@ private:
+ 
+                         slot.stats.n_gen = 0;
+                         slot.i_batch     = batch.size() - 1;
++                        slot.prompt_checkpoint_restored = false;
+ 
+                         slot.init_sampler();
+                     } else {

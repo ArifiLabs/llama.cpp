@@ -1,0 +1,82 @@
+From 569c5ce91cd162da2900827bdb8b4e6a520529ee Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 17:17:57 -0400
+Subject: [PATCH] lane-301: coopmat1 f16-B staging for MUL_MAT_ID on non-Intel
+ devices, default on
+
+lane-296 N11 for the id path. The id path staged B to f16 on Intel only, so
+iq2_s / iq3_xxs / iq3_s MUL_MAT_ID prompt matmuls ran the f32-B coopmat1
+kernel on AMD. Now cm1 stages B f32->f16 for MUL_MAT_ID when no int8 q8_1 id
+pipeline is taken (iq4_nl keeps int8) and tokens (ne12) >= cm1_f16b_min_n, so
+decode and verify widths keep f32-B. Intel behaviour unchanged.
+
+Not a precision change: the cm1 f32-B kernel already stores B into shared
+memory as f16vec2 on fp16 devices (mul_mm.comp:195, vulkan-shaders-gen.cpp
+529-531); staging moves the same rounding before the kernel.
+
+GGML_ARIFI_CM1_F16B_ID=0 keeps f32-B; =red is the planted wrong variant
+(staged B never written). One stderr line logs the first engagement.
+
+Squash of lane-301/qsa-longctx 0a5b3a21de (D57) + 9394a11c5c (D59 opt-in)
++ 8c16601ef4 (D61 default on, HQ81 ruling Q4); net code = D57 = the c14 arm.
+
+Served A/B c14-10061050 (bin-j, same binary, on vs =0, ABBA x2, logger off,
+Qwen3.8-Flash-Next IQ3_S, -ub 4096, F16 KV, Radeon 890M), prefill tok/s
+mean of 2 rounds: 2K 214.4 -> 219.4 (+2.3%), 8K 213.9 -> 218.4 (+2.1%),
+16K 204.6 -> 207.9 (+1.6%), 32K 193.8 -> 196.7 (+1.5%). Decode flat.
+Greedy ids identical 16/16. test-backend-ops on/off pass, RED FAIL=9.
+Quality c15-10061248 (KL vs f32-B, lane-299 method): prose and code KL mean
+0.000000, max 5.8e-5, same-top 100%, PPL equal to 6 digits = noise arm.
+Default-on engagement with no env: c16-10061553 smoke + MUL_MAT_ID 27/27.
+
+Origin: lane-301
+Measured-effect: prefill +2.3/+2.1/+1.6/+1.5% at 2K/8K/16K/32K, decode flat, ids identical (cache/qsa-x1-lane/cells/c14-10061050-state.json; quality cache/qsa-x1-lane/cells/c15-10061248-quality.json)
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 24 +++++++++++++++++++++++-
+ 1 file changed, 23 insertions(+), 1 deletion(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index ce099ab9f1..23d172cdf9 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -9904,8 +9904,30 @@ static void ggml_vk_mul_mat_id_q_f16(ggml_backend_vk_context * ctx, vk_context&
+ #else
+     const bool y_decode_vector_staging = false;
+ #endif
++    // arifi lane-301 D57: lane-296 N11 for the id path (was Intel-only). cm1 stages B f32->f16 when no int8 MMQ id
++    // pipeline is taken (iq4_nl keeps q8_1); threshold on tokens (ne12) so decode/verify widths stay on f32-B.
++    const bool id_mmq_possible = ctx->device->integer_dot_product && src1->type == GGML_TYPE_F32 &&
++                                 ggml_is_contiguous(src1) && ggml_vk_dim01_contiguous(src1) && (ne11 * ne10) % 4 == 0 &&
++                                 ggml_vk_get_mul_mat_mat_pipeline_map(ctx, src0->type, GGML_TYPE_Q8_1, (ggml_prec)dst->op_params[0], true) != nullptr;
++    // DEFAULT ON (D61, HQ81 Q4: the cm1 f32-B kernel already rounds B to f16 in shmem; c15 KL = noise floor).
++    // GGML_ARIFI_CM1_F16B_ID=0 keeps f32-B; =red is the planted wrong variant for the op gate.
++    static const char * id_f16b_env = getenv("GGML_ARIFI_CM1_F16B_ID");
++    static const bool id_f16b_off = id_f16b_env && id_f16b_env[0] == '0';
++    static const bool id_f16b_red = id_f16b_env && strcmp(id_f16b_env, "red") == 0;
++    const bool id_cm1_f16b = !id_f16b_off && ctx->device->coopmat_support && !ctx->device->coopmat2 && !id_mmq_possible &&
++                             ctx->device->vendor_id != VK_VENDOR_ID_INTEL &&
++                             ggml_is_quantized(src0->type) && src1->type == GGML_TYPE_F32 &&
++                             (ctx->device->cm1_f16b_mode == 1u ||
++                              (ctx->device->cm1_f16b_mode == 0u && ne12 >= ctx->device->cm1_f16b_min_n)) &&
++                             ggml_vk_get_mul_mat_mat_pipeline_map(ctx, src0->type, f16_type, (ggml_prec)dst->op_params[0], true) != nullptr;
++    static bool id_f16b_logged = false;
++    if (id_cm1_f16b && !id_f16b_logged) {
++        id_f16b_logged = true;
++        fprintf(stderr, "ggml_vulkan: lane-301 id f16-B staging engaged (%s, n=%u)%s\n", ggml_type_name(src0->type), (uint32_t) ne12, id_f16b_red ? " RED-PLANT" : "");
++    }
+     const bool y_non_contig = y_decode_vector_staging ||
+                               (ctx->device->coopmat2 && src1->type == GGML_TYPE_F32) ||
++                              id_cm1_f16b ||
+                               // Intel coopmat1: force f32->f16 conversion so the f16 B-type quant pipeline is used.
+                               (ctx->device->coopmat_support && !ctx->device->coopmat2 &&
+                                ctx->device->vendor_id == VK_VENDOR_ID_INTEL &&
+@@ -10219,7 +10241,7 @@ static void ggml_vk_mul_mat_id_q_f16(ggml_backend_vk_context * ctx, vk_context&
+                     (uint32_t)(y_staged_dst.nb[1] / y_staged_dst_type_size),
+                     (uint32_t)(y_staged_dst.nb[2] / y_staged_dst_type_size),
+                     (uint32_t)(y_staged_dst.nb[3] / y_staged_dst_type_size));
+-            } else {
++            } else if (!(id_cm1_f16b && id_f16b_red)) {  // red plant: staged B never written, kernel reads stale prealloc_y
+                 ggml_vk_cpy_to_contiguous(ctx, subctx, to_fp16_vk_1, src1, ggml_vk_subbuffer(ctx, d_Qy, qy_buf_offset), ggml_vk_subbuffer(ctx, d_Y, 0));
+             }
+             ctx->prealloc_y_last_pipeline_used = to_fp16_vk_1.get();

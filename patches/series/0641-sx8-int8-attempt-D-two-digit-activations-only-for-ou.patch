@@ -1,0 +1,316 @@
+From abc1412103bcf632b9aa402cc2d665d0246b3895 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 10:49:32 -0400
+Subject: [PATCH] sx8-int8 attempt D: two-digit activations only for outlier
+ blocks, skip kernel for the second pass
+
+GGML_ARIFI_SX8_CM1_2D_GATE=<T>: for the two-digit S-X8 roles, the residual quantizer (quantize_q8_1 GATE spec
+constant) writes the second digit only for q8_1 blocks with amax > T * mean|x|; all other blocks get q2 = 0, d2 = 0
+(they stay one-digit). Pass 2 runs matmul_sx8skip_q8_1 (SX8_SKIP): each workgroup scans the residual block scales
+of its column tile into a shared k-step bitmask and runs only the k-steps with a non-zero residual block. Pipelines
+under key {SX8, Q8_0}. Default unchanged (gate 0 = fix B). Exactness controls: T=1 must equal fix B, a huge T must
+equal one-digit. Offline (25 captured inputs): ffn_up at T=20 flags 0-0.42% of blocks, 0-4.4% of tile-chunks.
+
+Lane: sx8-int8-stage10-2026-10-02
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ ggml/src/ggml-vulkan/ggml-vulkan-types.h      |  4 +
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          | 37 ++++++++-
+ .../vulkan-shaders/mul_mmq_cm1.comp           | 75 +++++++++++++++++++
+ .../vulkan-shaders/quantize_q8_1.comp         | 26 +++++++
+ .../vulkan-shaders/vulkan-shaders-gen.cpp     |  2 +
+ 5 files changed, 141 insertions(+), 3 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan-types.h b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+index 2e97191041..ba213dd5fd 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan-types.h
++++ b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+@@ -1331,6 +1331,10 @@ struct vk_device_struct {
+     // replaces the two-digit route for S-X8 while on. Needs coopmat_int_k == 16.
+     bool sx8_cm1_h16 = false;
+     vk_pipeline pipeline_quantize_q8_1_x4_h16;
++    // lane sx8-int8 attempt D: two-digit only for outlier activation blocks (amax > gate * mean|x|), second pass skips
++    // all-zero residual k-steps [GGML_ARIFI_SX8_CM1_2D_GATE=<gate>, 0 = off = every block]. Pipelines under key {SX8, Q8_0}.
++    uint32_t sx8_cm1_2d_gate = 0;
++    vk_pipeline pipeline_quantize_q8_1_x4_resg;
+     // arifi lane-296 N11: coopmat1 f32->f16 B conversion. 0 = auto (only when a {type,F16} pipeline
+     // exists and ne11 >= cm1_f16b_min_n), 1 = upstream (always), 2 = never (r86i f32-B kernel).
+     uint32_t cm1_f16b_mode = 0;
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 200d08ca7f..529480fc64 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -1659,6 +1659,9 @@ static bool ggml_vk_matmul_cm1_int_shmem_support(const vk_device& device, const
+         if (src0_type == GGML_TYPE_SX8 && device->sx8_cm1_h16) {
+             total += BN * BK_STEP * 2u * (uint32_t)sizeof(float);  // buf_b_dh (attempt E)
+         }
++        if (src0_type == GGML_TYPE_SX8 && device->sx8_cm1_2d_gate != 0) {
++            total += 64u * (uint32_t)sizeof(uint32_t);  // sx8_skip_mask (attempt D)
++        }
+     }
+     if (has_kvalues) {
+         total += 16u * (uint32_t)sizeof(int8_t);         // cm1_kvalues[16]
+@@ -2771,6 +2774,11 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+                                h16 ? (sx8_cm1_red ? matmul_sx8hred_q8_1_cm1_data : matmul_sx8h_q8_1_cm1_data) : (sx8_cm1_red ? matmul_sx8red_q8_1_cm1_data : matmul_sx8_q8_1_cm1_data),
+                                sizeof(vk_mat_mat_push_constants), 3);
+             }
++            // attempt D: the skip kernel for the gated second pass, under its own key {SX8, Q8_0} (no S-X8 x Q8_0 matmul exists).
++            if (sx8_cm1 && !h16 && device->sx8_cm1_2d_gate != 0) {
++                cm1_create_mmq({GGML_TYPE_SX8, GGML_TYPE_Q8_0, false, false}, tc_mmq_cm1_int, "matmul_sx8skip_q8_1",
++                               matmul_sx8skip_q8_1_cm1_len, matmul_sx8skip_q8_1_cm1_data, sizeof(vk_mat_mat_push_constants), 3);
++            }
+             fprintf(stderr, "ggml_vulkan: S-X8 int8 cm1 MMQ: %s%s [GGML_ARIFI_SX8_CM1%s / _H16]\n",
+                     !sx8_cm1 ? "OFF" : sx8_cm1_red ? "ON (RED twin, test control)" : "ON", h16 ? ", 16-value activation scales" : "",
+                     sx8_cm1_red ? " / _RED" : "");
+@@ -4175,10 +4183,12 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+         ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4, "quantize_q8_1_x4", quantize_q8_1_x4_subgroup_len, quantize_q8_1_x4_subgroup_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16 }, 1, true, true);
+         ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4_res, "quantize_q8_1_x4_res", quantize_q8_1_x4_subgroup_len, quantize_q8_1_x4_subgroup_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16, 1u, device->q8_0_cm1_2d_shift }, 1, true, true);
+         ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4_h16, "quantize_q8_1_x4_h16", quantize_q8_1_x4_subgroup_len, quantize_q8_1_x4_subgroup_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16, 0u, 0u, 1u }, 1, true, true);
++        ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4_resg, "quantize_q8_1_x4_resg", quantize_q8_1_x4_subgroup_len, quantize_q8_1_x4_subgroup_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16, 1u, device->q8_0_cm1_2d_shift, 0u, device->sx8_cm1_2d_gate }, 1, true, true);
+     } else {
+         ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4, "quantize_q8_1_x4", quantize_q8_1_x4_len, quantize_q8_1_x4_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16 }, 1);
+         ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4_res, "quantize_q8_1_x4_res", quantize_q8_1_x4_len, quantize_q8_1_x4_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16, 1u, device->q8_0_cm1_2d_shift }, 1);
+         ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4_h16, "quantize_q8_1_x4_h16", quantize_q8_1_x4_len, quantize_q8_1_x4_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16, 0u, 0u, 1u }, 1);
++        ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4_resg, "quantize_q8_1_x4_resg", quantize_q8_1_x4_len, quantize_q8_1_x4_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16, 1u, device->q8_0_cm1_2d_shift, 0u, device->sx8_cm1_2d_gate }, 1);
+     }
+ 
+     for (uint32_t i = 0; i < p021_max_gqa_ratio; ++i) {
+@@ -6154,6 +6164,12 @@ vk_device ggml_vk_get_device(size_t idx) {
+                     fprintf(stderr, "ggml_vulkan: S-X8 int8 cm1 16-value activation scales: %s [GGML_ARIFI_SX8_CM1_H16]\n",
+                             device->sx8_cm1_h16 ? "ON (replaces two-digit for S-X8)" : "REFUSED (int8 coopmat K != 16)");
+                 }
++                const char * sxg = getenv("GGML_ARIFI_SX8_CM1_2D_GATE");
++                if (sxg != nullptr && *sxg) {
++                    device->sx8_cm1_2d_gate = (uint32_t) atoi(sxg);
++                    fprintf(stderr, "ggml_vulkan: S-X8 int8 cm1 two-digit gate: amax > %u * mean|x| (others one-digit, pass 2 skips) [GGML_ARIFI_SX8_CM1_2D_GATE]\n",
++                            device->sx8_cm1_2d_gate);
++                }
+                 const char * f32a = getenv("GGML_ARIFI_F32ACC");
+                 for (const char * p = f32a; p != nullptr && *p; ) {
+                     const char * e = strchr(p, ',');
+@@ -8047,6 +8063,21 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
+     // two-digit: q2 lives after q1 in prealloc_y (offset aligned, 144-byte read slack kept for both)
+     const uint64_t y2_off = two_digit ? ggml_vk_align_size(CEIL_DIV(y_sz, 144) * 144, ctx->device->properties.limits.minStorageBufferOffsetAlignment) : 0;
+     const uint64_t y_need = two_digit ? y2_off + CEIL_DIV(y_sz, 144) * 144 : y_sz;
++    // attempt D: gated second digit (outlier blocks only) + the skip kernel for pass 2
++    const bool sx8_gate = two_digit && src0->type == GGML_TYPE_SX8 && ctx->device->sx8_cm1_2d_gate != 0;
++    vk_pipeline pipeline2 = pipeline;
++    if (sx8_gate) {
++        const std::vector<vk_matmul_pipeline_pair>* smap = ggml_vk_get_mul_mat_mat_pipeline_map(ctx, GGML_TYPE_SX8, GGML_TYPE_Q8_0, prec);
++        GGML_ASSERT(smap != nullptr);
++        pipeline2 = ggml_vk_guess_matmul_pipeline_map(ctx, *smap, ne01, ne11, aligned, false);
++        if (ggml_nbytes(src0) > ctx->device->properties.limits.maxStorageBufferRange) {
++            pipeline2 = ggml_vk_get_64b_indexing_pipeline(ctx, pipeline2);
++        }
++        if (ctx->device->q8_0_cm1_roles_logged.insert("sx8-2dg:" + std::to_string(ne01) + "x" + std::to_string(ne10)).second) {
++            fprintf(stderr, "ggml_vulkan: S-X8 %s (%u rows, k=%u, n=%u): INT8x2g gate %u\n", src0->name, (uint32_t) ne01, (uint32_t) ne10,
++                    (uint32_t) ne11, ctx->device->sx8_cm1_2d_gate);
++        }
++    }
+ 
+     vk_pipeline to_fp16_vk_0 = nullptr;
+     vk_pipeline to_fp16_vk_1 = nullptr;
+@@ -8101,7 +8132,7 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
+             ggml_pipeline_request_descriptor_sets(ctx, to_q8_1, 1);
+         }
+         if (two_digit) {
+-            ggml_pipeline_request_descriptor_sets(ctx, ctx->device->pipeline_quantize_q8_1_x4_res, 1);
++            ggml_pipeline_request_descriptor_sets(ctx, sx8_gate ? ctx->device->pipeline_quantize_q8_1_x4_resg : ctx->device->pipeline_quantize_q8_1_x4_res, 1);
+         }
+         if (split_k > 1) {
+             ggml_pipeline_request_descriptor_sets(ctx, ctx->device->pipeline_matmul_split_k_reduce, 1);
+@@ -8207,13 +8238,13 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
+             ggml_vk_sync_buffers(ctx, subctx);
+         }
+         ggml_vk_quantize_q8_1_with(ctx, subctx, ggml_vk_subbuffer(ctx, d_Qy, qy_buf_offset), ggml_vk_subbuffer(ctx, d_Y, y2_off), y_ne,
+-                                   ctx->device->pipeline_quantize_q8_1_x4_res);
++                                   sx8_gate ? ctx->device->pipeline_quantize_q8_1_x4_resg : ctx->device->pipeline_quantize_q8_1_x4_res);
+         if (ctx->prealloc_split_k_need_sync) {
+             ggml_vk_sync_buffers(ctx, subctx);
+         }
+         for (uint64_t pass = 0; pass < 2; ++pass) {
+             ggml_vk_matmul(
+-                ctx, subctx, pipeline,
++                ctx, subctx, pass == 0 ? pipeline : pipeline2,
+                 { d_X, x_buf_offset, x_sz }, { d_Y, pass * y2_off, y_sz },
+                 { ctx->prealloc_split_k, pass * d_sz, d_sz }, {},
+                 ne01, ne11, ne10,
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mmq_cm1.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mmq_cm1.comp
+index 4f30216a2b..3bc206632c 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mmq_cm1.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mmq_cm1.comp
+@@ -117,6 +117,31 @@ shared float buf_b_dh[BN * BK_STEP * 2];
+ shared float buf_b_s[BN * BK_STEP];
+ #endif
+ 
++#if defined(SX8_SKIP)
++#if defined(MUL_MAT_ID)
++#error "SX8_SKIP is dense only"
++#endif
++// attempt D: one bit per k-step (BK * BK_STEP values) of this workgroup's column tile; set = some residual block of
++// the tile in that k-step is non-zero. Covers K up to 64 * 32 * 128.
++#define SX8_SKIP_WORDS 64
++shared uint sx8_skip_mask[SX8_SKIP_WORDS];
++// first active k-step at or after block b (block = start_k + i * BK * BK_STEP), end_k if none
++uint sx8_skip_next(uint b, uint start_k, uint end_k) {
++    if (b >= end_k) return end_k;
++    uint i = (b - start_k) / (BK * BK_STEP);
++    const uint nks = (end_k - start_k + BK * BK_STEP - 1) / (BK * BK_STEP);
++    while (i < nks) {
++        const uint w = sx8_skip_mask[i / 32] >> (i % 32);
++        if (w != 0) {
++            i += uint(findLSB(w));
++            return i < nks ? start_k + i * (BK * BK_STEP) : end_k;
++        }
++        i = (i / 32 + 1) * 32;
++    }
++    return end_k;
++}
++#endif
++
+ #if defined(DATA_A_IQ4_NL) || defined(DATA_A_IQ4_XS) || defined(DATA_A_MXFP4) || defined(DATA_A_NVFP4)
+ shared int8_t cm1_kvalues[16];
+ #endif
+@@ -300,9 +325,46 @@ void main() {
+     block_a_prefetch pre_a[A_LOADS * BK_STEP];
+     block_b_prefetch pre_b[B_LOADS * BK_STEP];
+ 
++#if defined(SX8_SKIP)
++    {
++        const uint KSTEP = BK * BK_STEP;
++        const uint nks = (end_k - start_k + KSTEP - 1) / KSTEP;
++        for (uint i = gl_LocalInvocationID.x; i < SX8_SKIP_WORDS; i += BLOCK_SIZE) {
++            sx8_skip_mask[i] = 0u;
++        }
++        barrier();
++        // k-step fastest: one column's consecutive x4 blocks sit next to each other in memory
++        for (uint t = gl_LocalInvocationID.x; t < BN * nks; t += BLOCK_SIZE) {
++            const uint c = t / nks;
++            const uint s = t % nks;
++            if (ic * BN + c < p.N) {
++                const uint ib = (batch_idx * p.batch_stride_b + (ic * BN + c) * p.stride_b + start_k) / BK + s * BK_STEP;
++                bool any = false;
++                [[unroll]] for (uint ks = 0; ks < BK_STEP; ks++) {
++                    if (start_k + s * KSTEP + ks * BK < end_k) {
++                        const uint ib_k = ib + ks;
++                        any = any || float(data_b[ib_k / 4].ds[ib_k % 4].x) != 0.0;
++                    }
++                }
++                if (any) {
++                    atomicOr(sx8_skip_mask[s / 32], 1u << (s % 32));
++                }
++            }
++        }
++        barrier();
++    }
++    const uint first_block = sx8_skip_next(start_k, start_k, end_k);
++    pos_a_ib += (first_block - start_k) / BK;
++    pos_b_ib += (first_block - start_k) / BK;
++    if (first_block < end_k) {
++        PREFETCH_BLOCK(first_block)
++    }
++#else
++    const uint first_block = start_k;
+     if (start_k < end_k) {
+         PREFETCH_BLOCK(start_k)
+     }
++#endif
+ 
+     const uint a_row0 = warp_r * WM;
+     const uint b_col0 = warp_c * WN;
+@@ -314,15 +376,25 @@ void main() {
+ 
+     barrier();
+ 
++#if defined(SX8_SKIP)
++    for (uint block = first_block; block < end_k; ) {
++#else
+     for (uint block = start_k; block < end_k; block += BK * BK_STEP) {
++#endif
+         STORE_BLOCK_TO_LDS(block)
+ 
+         barrier();
+ 
++#if defined(SX8_SKIP)
++        const uint next_block = sx8_skip_next(block + BK * BK_STEP, start_k, end_k);
++        pos_a_ib += (next_block - block) / BK;
++        pos_b_ib += (next_block - block) / BK;
++#else
+         pos_a_ib += BK_STEP;
+         pos_b_ib += BK_STEP;
+ 
+         const uint next_block = block + BK * BK_STEP;
++#endif
+         if (next_block < end_k) {
+             PREFETCH_BLOCK(next_block)
+         }
+@@ -533,6 +605,9 @@ void main() {
+         }
+ 
+         barrier();
++#if defined(SX8_SKIP)
++        block = next_block;
++#endif
+     }
+ 
+ #undef PREFETCH_BLOCK
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/quantize_q8_1.comp b/ggml/src/ggml-vulkan/vulkan-shaders/quantize_q8_1.comp
+index c81302d203..d8425a50c4 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/quantize_q8_1.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/quantize_q8_1.comp
+@@ -30,6 +30,9 @@ layout(constant_id = 3) const uint RES_SHIFT = 0;
+ // lane sx8-int8 attempt E: 1 = one scale per 16-value half block, ds = (d0, d1). Only the S-X8 H16 cm1 kernel reads it
+ // (it sums the int8 activations exactly, so the block sum ds.y is not needed). Not combined with RESIDUAL.
+ layout(constant_id = 4) const uint HALF = 0;
++// lane sx8-int8 attempt D: with RESIDUAL, write the second digit only for blocks with amax > GATE * mean|x| (an outlier
++// block); every other block gets q2 = 0, d2 = 0, so the SX8_SKIP matmul can skip it. 0 = off (every block).
++layout(constant_id = 5) const uint GATE = 0;
+ layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
+ 
+ layout (binding = 0) readonly buffer A {vec4 data_a[];};
+@@ -108,8 +111,31 @@ void quantize(const uint wgid) {
+         q = clamp(q, vec4(-127.0), vec4(127.0));
+     }
+     if (RESIDUAL != 0) {
++        bool keep = true;
++        if (GATE != 0) {
++            const float thread_asum = abs_vals.x + abs_vals.y + abs_vals.z + abs_vals.w;
++#ifndef USE_SUBGROUPS
++            barrier();
++            shmem[tid] = thread_asum;
++            barrier();
++            [[unroll]] for (uint s = 4; s > 0; s >>= 1) {
++                if (iqs < s) {
++                    shmem[tid] += shmem[tid + s];
++                }
++                barrier();
++            }
++            const float asum = shmem[block_in_wg * 8];
++#else
++            const float asum = subgroupClusteredAdd(thread_asum, 8);
++#endif
++            // amax > GATE * (asum / 32)
++            keep = amax * 32.0 > float(GATE) * asum;
++        }
+         // second int8 digit: requantize x - q1 * f16(d1), q1 recomputed exactly as the first pass stored it
+         vals -= q * float(f16vec2(vec2(d, 0.0)).x);
++        if (!keep) {
++            vals = vec4(0.0);
++        }
+         vals = ldexp(vals, ivec4(int(RES_SHIFT)));
+         const vec4 abs_r = abs(vals);
+         const float thread_rmax = max(max(abs_r.x, abs_r.y), max(abs_r.z, abs_r.w));
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+index ab26491fe0..e6526b3df3 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+@@ -740,6 +740,8 @@ void matmul_shaders(bool fp16, MatMulIdType matmul_id_type, bool coopmat, bool c
+         // attempt E: 16-value activation scales (SX8_H16), and its RED twin.
+         string_to_spv(shader_name + "_sx8h_q8_1", "mul_mmq_cm1.comp", merge_maps(merge_maps(base_dict, sx8_cm1_dict), {{"SX8_H16", "1"}}), fp16, coopmat, coopmat2, f16acc);
+         string_to_spv(shader_name + "_sx8hred_q8_1", "mul_mmq_cm1.comp", merge_maps(merge_maps(base_dict, sx8_cm1_dict), {{"SX8_H16", "1"}, {"SX8_CM1_RED", "1"}}), fp16, coopmat, coopmat2, f16acc);
++        // attempt D: second (residual) pass that skips k-steps whose residual blocks are all zero (gated quantizer).
++        string_to_spv(shader_name + "_sx8skip_q8_1", "mul_mmq_cm1.comp", merge_maps(merge_maps(base_dict, sx8_cm1_dict), {{"SX8_SKIP", "1"}}), fp16, coopmat, coopmat2, f16acc);
+     }
+ 
+     // TurboQuant weight types, ROTATED matmul.

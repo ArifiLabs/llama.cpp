@@ -1,0 +1,169 @@
+From 6040b1c74c321407c442dad09d776b06d34e3db1 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 05:02:04 -0400
+Subject: [PATCH] qwen4exp: load upstream #29761 MTP GGUFs (nextn.hc_head_*
+ mixer, QSA indexer in the MTP block, MTP-only files)
+
+An upstream-converted Qwen3.8-Flash-Next GGUF could not be loaded at all, with or without MTP: its MTP block (blk.N)
+carries blk.N.nextn.hc_head_{norm,down,up} and the block's QSA indexer tensors, which our loader never created, so the
+tensor count check refused the file. An upstream MTP-only file also lacks the top-level output_hc_* mixer our sidecar
+carries in that slot.
+
+- llama-arch: LLM_TENSOR_NEXTN_HC_HEAD_{NORM,DOWN,UP} = blk.%d.nextn.hc_head_{norm,down,up}, same names and op info
+  as upstream.
+- loader: the MTP block creates nextn.hc_head_* (not required; our sidecar has none) and acknowledges the block's
+  indexer tensors with TENSOR_SKIP (counted, never loaded: our MTP attention is dense, the indexer is dropped as in
+  Strata mtp.cpp:215). An MTP-only file no longer requires the top-level output_hc_*.
+- graph_mtp: the final mixer is nextn.hc_head_* when the file has it (an upstream full file's output_hc_* is the
+  TRUNK's mixer), else output_hc_* (our sidecar). Asserts one exists.
+- No math change: hnorm stays one RMS over all hc streams (SGLang qwen4_exp_mtp.py reference, QUESTIONS Q1/Q12);
+  upstream's converter writes nextn.hnorm flat [hc*n_embd], the shape we already load. Our sidecar creates the same
+  tensors and builds the same graph as before.
+
+Port onto the v0.1.3.1 source tip (80cb4288de) of upstream-x1/port be19a79540, for the v0.1.3.2 served A/B.
+Receipt (cells/rg7-summary.txt, RED fd9211c0c3 vs GREEN be19a79540): RED refuses up-full.gguf (expected 148, got 141)
+and up-mtponly.gguf; GREEN CPU + Vulkan ids [92 109 18 22] equal to the sidecar, max|d|=0; sidecar logits FNV-1a
+16d02dcc21b18fcc on both arms (bit-equal).
+
+Taken-from: ggml-org/llama.cpp@c061df1983 (#29761) - tensor names and file layout only; the MTP math stays ours.
+Measured-effect: upstream #29761 qwen4exp GGUFs (full and MTP-only) now load and draft with logits bit-equal to our
+ sidecar of the same weights (CPU + Vulkan); our sidecar logits hash unchanged RED vs GREEN. Speed not measured
+ (loader row). Served W5 MTP greedy ids-identical run on the real sidecar = cell p14ab (see MERGE-READY row P26).
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/llama-arch.cpp      |  6 ++++++
+ src/llama-arch.h        |  3 +++
+ src/llama-model.h       |  5 +++++
+ src/models/qwen4exp.cpp | 39 +++++++++++++++++++++++++++++++--------
+ 4 files changed, 45 insertions(+), 8 deletions(-)
+
+diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
+index a1eaebd0a9..a5f8ce5e0f 100644
+--- a/src/llama-arch.cpp
++++ b/src/llama-arch.cpp
+@@ -621,6 +621,9 @@ static const std::map<llm_tensor, const char *> LLM_TENSOR_NAMES = {
+     { LLM_TENSOR_NEXTN_HNORM,                            "blk.%d.nextn.hnorm" },
+     { LLM_TENSOR_NEXTN_SHARED_HEAD_HEAD,                 "blk.%d.nextn.shared_head_head" },
+     { LLM_TENSOR_NEXTN_SHARED_HEAD_NORM,                 "blk.%d.nextn.shared_head_norm" },
++    { LLM_TENSOR_NEXTN_HC_HEAD_NORM,                     "blk.%d.nextn.hc_head_norm" },
++    { LLM_TENSOR_NEXTN_HC_HEAD_DOWN,                     "blk.%d.nextn.hc_head_down" },
++    { LLM_TENSOR_NEXTN_HC_HEAD_UP,                       "blk.%d.nextn.hc_head_up" },
+     { LLM_TENSOR_ATTN_SUB_NORM,                          "blk.%d.attn_sub_norm" },
+     { LLM_TENSOR_FFN_SUB_NORM,                           "blk.%d.ffn_sub_norm" },
+     { LLM_TENSOR_DEC_OUTPUT_NORM,                        "dec.output_norm" },
+@@ -1034,6 +1037,9 @@ static const std::map<llm_tensor, llm_tensor_info> LLM_TENSOR_INFOS = {
+     {LLM_TENSOR_NEXTN_HNORM,                {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
+     {LLM_TENSOR_NEXTN_SHARED_HEAD_HEAD,     {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL_MAT}},
+     {LLM_TENSOR_NEXTN_SHARED_HEAD_NORM,     {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
++    {LLM_TENSOR_NEXTN_HC_HEAD_NORM,         {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
++    {LLM_TENSOR_NEXTN_HC_HEAD_DOWN,         {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL_MAT}},
++    {LLM_TENSOR_NEXTN_HC_HEAD_UP,           {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL_MAT}},
+     // Nemotron 3 Super
+     // latent projections feed ggml_mul_mat, the buft probe must use MUL_MAT to keep them on GPU
+     {LLM_TENSOR_FFN_LATENT_DOWN,            {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL_MAT}},
+diff --git a/src/llama-arch.h b/src/llama-arch.h
+index df00ee9a98..b9c5620b11 100644
+--- a/src/llama-arch.h
++++ b/src/llama-arch.h
+@@ -726,6 +726,9 @@ enum llm_tensor {
+     LLM_TENSOR_NEXTN_HNORM,
+     LLM_TENSOR_NEXTN_SHARED_HEAD_HEAD,
+     LLM_TENSOR_NEXTN_SHARED_HEAD_NORM,
++    LLM_TENSOR_NEXTN_HC_HEAD_NORM,
++    LLM_TENSOR_NEXTN_HC_HEAD_DOWN,
++    LLM_TENSOR_NEXTN_HC_HEAD_UP,
+     LLM_TENSOR_MASKED_EMBD_CENTROIDS,
+     LLM_TENSOR_MASKED_EMBD_ORDERING,
+     LLM_TENSOR_HRM_Z_L_INIT,
+diff --git a/src/llama-model.h b/src/llama-model.h
+index 97252acacc..41ca78dc09 100644
+--- a/src/llama-model.h
++++ b/src/llama-model.h
+@@ -233,6 +233,11 @@ struct llama_layer_nextn {
+     struct ggml_tensor * shared_head_head_s    = nullptr;
+     struct ggml_tensor * shared_head_head_in_s = nullptr;
+     struct ggml_tensor * shared_head_norm      = nullptr;
++
++    // qwen4exp, upstream #29761 layout: the MTP block's own final hyper-connection mixer
++    struct ggml_tensor * hc_head_norm          = nullptr;
++    struct ggml_tensor * hc_head_down          = nullptr;
++    struct ggml_tensor * hc_head_up            = nullptr;
+ };
+ 
+ struct llama_layer_switch_lora {
+diff --git a/src/models/qwen4exp.cpp b/src/models/qwen4exp.cpp
+index 36434e11f0..e1ac2102df 100644
+--- a/src/models/qwen4exp.cpp
++++ b/src/models/qwen4exp.cpp
+@@ -169,13 +169,18 @@ void llama_model_qwen4exp::load_arch_tensors(llama_model_loader & ml) {
+     const int64_t hc_dim = hc * n_embd;
+     const int64_t hc_lr  = hparams.hc_low_rank;
+ 
++    // an MTP-only file carries the MTP block, tok_embd and output, and no trunk: our sidecar (lane-298) puts the MTP
++    // block's own final mixer in the output_hc_* slot, an upstream #29761 MTP-only file has no output_hc_* at all
++    const bool mtp_only = n_layer_nextn > 0 && ml.get_weight("blk.0.hc_attn_norm.weight") == nullptr;
++    const int head_flags = mtp_only ? TENSOR_NOT_REQUIRED : 0;
++
+     tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), { n_embd, n_vocab }, 0);
+ 
+     // there is no output_norm: the final hyper-connection mixer carries it
+     // the gammas load as [n_embd, hc] so the grouped norm multiplies them without a graph reshape
+-    hc_head_norm = create_tensor(tn(LLM_TENSOR_HC_HEAD_NORM, "weight"), { n_embd, hc }, TENSOR_ALLOW_RESHAPE);
+-    hc_head_down = create_tensor(tn(LLM_TENSOR_HC_HEAD_DOWN, "weight"), { hc_dim, hc_lr }, 0);
+-    hc_head_up   = create_tensor(tn(LLM_TENSOR_HC_HEAD_UP,   "weight"), { hc_lr, hc_dim }, 0);
++    hc_head_norm = create_tensor(tn(LLM_TENSOR_HC_HEAD_NORM, "weight"), { n_embd, hc }, TENSOR_ALLOW_RESHAPE | head_flags);
++    hc_head_down = create_tensor(tn(LLM_TENSOR_HC_HEAD_DOWN, "weight"), { hc_dim, hc_lr }, head_flags);
++    hc_head_up   = create_tensor(tn(LLM_TENSOR_HC_HEAD_UP,   "weight"), { hc_lr, hc_dim }, head_flags);
+ 
+     // an MTP sidecar may carry a reduced draft head: output rows for a token subset + d2t (Strata draft_vocab)
+     int64_t n_vocab_out = n_vocab;
+@@ -212,10 +217,6 @@ void llama_model_qwen4exp::load_arch_tensors(llama_model_loader & ml) {
+                                            { hparams.ple_head_dim, ple_rows }, TENSOR_READ_LAZY);
+     }
+ 
+-    // an MTP sidecar (lane-298) carries the MTP block, tok_embd and output, and no trunk;
+-    // its output_hc_* slot holds the MTP block's own final mixer
+-    const bool mtp_only = n_layer_nextn > 0 && ml.get_weight("blk.0.hc_attn_norm.weight") == nullptr;
+-
+     for (int il = mtp_only ? n_layer : 0; il < n_layer; ++il) {
+         auto & layer = layers[il];
+ 
+@@ -297,6 +298,20 @@ void llama_model_qwen4exp::load_arch_tensors(llama_model_loader & ml) {
+         layer.nextn.enorm   = create_tensor(tn(LLM_TENSOR_NEXTN_ENORM,   "weight", il), { n_embd },             mtp_flags);
+         layer.nextn.hnorm   = create_tensor(tn(LLM_TENSOR_NEXTN_HNORM,   "weight", il), { hc_dim },             mtp_flags);
+ 
++        // upstream #29761 layout: the block's own final mixer under nextn.hc_head_* (our sidecar: output_hc_*), and the
++        // block's QSA indexer, which our dense MTP attention drops (Strata mtp.cpp:215): counted, never loaded
++        layer.nextn.hc_head_norm = create_tensor(tn(LLM_TENSOR_NEXTN_HC_HEAD_NORM, "weight", il), { n_embd, hc },     TENSOR_NOT_REQUIRED | TENSOR_ALLOW_RESHAPE | mtp_flags);
++        layer.nextn.hc_head_down = create_tensor(tn(LLM_TENSOR_NEXTN_HC_HEAD_DOWN, "weight", il), { hc_dim, hc_lr },  TENSOR_NOT_REQUIRED | mtp_flags);
++        layer.nextn.hc_head_up   = create_tensor(tn(LLM_TENSOR_NEXTN_HC_HEAD_UP,   "weight", il), { hc_lr, hc_dim },  TENSOR_NOT_REQUIRED | mtp_flags);
++        {
++            const int64_t idx_dim = hparams.indexer_head_size;
++            const int     unused  = TENSOR_NOT_REQUIRED | TENSOR_SKIP;
++            create_tensor(tn(LLM_TENSOR_INDEXER_Q_PROJ, "weight", il), { n_embd, hparams.indexer_n_head * idx_dim }, unused);
++            create_tensor(tn(LLM_TENSOR_INDEXER_K_PROJ, "weight", il), { n_embd, idx_dim }, unused);
++            create_tensor(tn(LLM_TENSOR_INDEXER_Q_NORM, "weight", il), { idx_dim }, unused);
++            create_tensor(tn(LLM_TENSOR_INDEXER_K_NORM, "weight", il), { idx_dim }, unused);
++        }
++
+         layer.hc_attn_norm   = create_tensor(tn(LLM_TENSOR_HC_ATTN_NORM,   "weight", il), { n_embd, hc }, TENSOR_ALLOW_RESHAPE | mtp_flags);
+         layer.hc_attn_down   = create_tensor(tn(LLM_TENSOR_HC_ATTN_DOWN,   "weight", il), { hc_dim, hc_lr }, mtp_flags);
+         layer.hc_attn_up     = create_tensor(tn(LLM_TENSOR_HC_ATTN_UP,     "weight", il), { hc_lr, hc_dim }, mtp_flags);
+@@ -1721,8 +1736,16 @@ llama_model_qwen4exp::graph_mtp::graph_mtp(const llama_model & model, const llm_
+     cb(res->t_h_nextn, "h_nextn", -1);
+     ggml_build_forward_expand(gf, res->t_h_nextn);
+ 
++    // the block's own final mixer: nextn.hc_head_* in an upstream #29761 file (whose output_hc_* is the TRUNK's),
++    // output_hc_* in our sidecar
++    const bool nextn_mix = layer.nextn.hc_head_norm != nullptr;
++    GGML_ASSERT((nextn_mix ? layer.nextn.hc_head_down && layer.nextn.hc_head_up : model.hc_head_norm != nullptr) &&
++            "QWEN4EXP MTP block has no final mixer");
+     cur = ggml_reshape_3d(ctx0, flat_out, n_embd, hc, flat_out->ne[1]);
+-    cur = build_hc_mix(cur, model.hc_head_norm, model.hc_head_down, model.hc_head_up, nullptr, nullptr, -1);
++    cur = build_hc_mix(cur,
++            nextn_mix ? layer.nextn.hc_head_norm : model.hc_head_norm,
++            nextn_mix ? layer.nextn.hc_head_down : model.hc_head_down,
++            nextn_mix ? layer.nextn.hc_head_up   : model.hc_head_up, nullptr, nullptr, -1);
+     cb(cur, "result_norm", -1);
+     res->t_embd = cur;
+ 

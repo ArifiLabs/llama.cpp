@@ -1,0 +1,954 @@
+From ddd1f81f67f802ffa66e45a953b2921862edda55 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 14:14:47 -0400
+Subject: [PATCH] tools: qwen4exp MTP sidecar builders, with Strata's fetch
+ tool and its MIT license
+
+The published Qwen3.8-Flash-Next GGUFs carry no MTP head, so nobody outside could build the
+sidecar our recipe names. tools/qwen4exp-mtp-sidecar/ ships the full chain: Strata's
+mtp_fetch.py (+ its mocked test) fetches the 31 BF16 mtp.* tensors at a pinned Qwen revision,
+build_sidecar.py verifies the ashbash Q8_0 head against that BF16 truth and writes the sidecar,
+make_dvocab_sidecar.py writes the optional 40,525-token draft-vocabulary head. README pins every
+input and gives the sha256 of both outputs. Strata's MIT text joins licenses/ with its row.
+
+Origin: lane-298 (build_sidecar.py, make_dvocab_sidecar.py, README.md)
+Taken-from: Niko1221/Strata@82f46a8c8f475f001ad76d92f58f4a4f8ffb0253 (tools/mtp_fetch.py, tools/test_mtp_fetch.py, LICENSE; copied unchanged)
+Measured-effect: none on the engine (tools only); the shipped scripts regenerate both served sidecars with identical tensors, cache/mtp-x1-lane/cells/sidecar-regen.txt
+---
+ licenses/README.md                            |   1 +
+ licenses/strata-MIT.txt                       |  21 ++
+ tools/qwen4exp-mtp-sidecar/README.md          |  60 ++++
+ tools/qwen4exp-mtp-sidecar/build_sidecar.py   | 223 +++++++++++++
+ .../make_dvocab_sidecar.py                    |  61 ++++
+ tools/qwen4exp-mtp-sidecar/mtp_fetch.py       | 308 ++++++++++++++++++
+ tools/qwen4exp-mtp-sidecar/test_mtp_fetch.py  | 201 ++++++++++++
+ 7 files changed, 875 insertions(+)
+ create mode 100644 licenses/strata-MIT.txt
+ create mode 100644 tools/qwen4exp-mtp-sidecar/README.md
+ create mode 100644 tools/qwen4exp-mtp-sidecar/build_sidecar.py
+ create mode 100644 tools/qwen4exp-mtp-sidecar/make_dvocab_sidecar.py
+ create mode 100644 tools/qwen4exp-mtp-sidecar/mtp_fetch.py
+ create mode 100644 tools/qwen4exp-mtp-sidecar/test_mtp_fetch.py
+
+diff --git a/licenses/README.md b/licenses/README.md
+index 865a6ad4bb..a504bf6f99 100644
+--- a/licenses/README.md
++++ b/licenses/README.md
+@@ -19,6 +19,7 @@ source tree. Do not edit, normalize, shorten, or regenerate these files.
+ | `zuijdwijk-MIT.txt` | `git show refs/remotes/zuijdwijk/master:LICENSE` (LaurentZuijdwijk/llama.cpp) | zuijdwijk MIT (llama.cpp lineage, "The ggml authors"). **Retained 2026-08-29 (gap G11)** — the remote was configured and fetched but registered nowhere. **CODE IS CARRIED** (`e146c1175`, `c1440b85d` on lane-166 branches, both trailered `Taken-from: LaurentZuijdwijk/llama.cpp`); tracked source in `sources.json` `remotes`, pinned `f97c0e6fe`. |
+ | `buun-MIT.txt` | `git show refs/remotes/buun/master:LICENSE` (spiritbuun/buun-llama-cpp) | buun MIT. **Retained 2026-08-27; this was a GAP** — series patch `0394` ingested buun's DFlash2 controller on 2026-08-21 with no notice row, so the notice lagged the code by six days. Byte-identical to the upstream MIT text apart from LF termination. |
+ | `turboq-mtp-MIT.txt` | `LICENSE` of `https://github.com/jtrefon/llama.cpp-turboq-mtp` at `6a02d0494` (shallow clone `cache/r18-turboq-src`, 1099 bytes, "The ggml authors") | jtrefon MIT (llama.cpp lineage). **Retained 2026-09-07 (lane-212, WI-1694) in the same commit that carries the code**: the TBQ3_0/TBQ4_0 codec (`ggml/src/ggml-tbq-quant.c`, tables) at ids 58/59 is ported from this tree. Tracked source in `sources.json` `remotes` as `turboq`, pinned `6a02d0494`. |
++| `strata-MIT.txt` | `LICENSE` of `https://github.com/Niko1221/Strata` at tag `v0.1.40.1` (`82f46a8c8f`) | Strata MIT ("Niko1221 and the Strata contributors"). **Retained 2026-10-07 (lane 298, point release v0.1.3.1) in the same commit that carries the code**: `tools/qwen4exp-mtp-sidecar/mtp_fetch.py` + `test_mtp_fetch.py`, copied unchanged. |
+ 
+ `../LICENSE` is also the verbatim copy of upstream llama.cpp’s MIT license.
+ 
+diff --git a/licenses/strata-MIT.txt b/licenses/strata-MIT.txt
+new file mode 100644
+index 0000000000..6687a423dd
+--- /dev/null
++++ b/licenses/strata-MIT.txt
+@@ -0,0 +1,21 @@
++MIT License
++
++Copyright (c) 2026 Niko1221 and the Strata contributors
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
+diff --git a/tools/qwen4exp-mtp-sidecar/README.md b/tools/qwen4exp-mtp-sidecar/README.md
+new file mode 100644
+index 0000000000..b15c95b132
+--- /dev/null
++++ b/tools/qwen4exp-mtp-sidecar/README.md
+@@ -0,0 +1,60 @@
++# qwen4exp MTP sidecar (Qwen3.8-Flash-Next)
++
++The published Qwen3.8-Flash-Next GGUFs carry no MTP head. This folder builds a small side GGUF that holds only the MTP
++block, so the engine drafts with it: `llama-server -m <main gguf> -md <sidecar> --spec-type draft-mtp`.
++
++## Inputs (all pinned)
++
++| input | where | pin |
++|---|---|---|
++| main model | Hugging Face `ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF`, `IQ3_S/...-00001-of-00002.gguf` | hparams, tokenizer, `token_embd`, `output` are copied from shard 00001 |
++| MTP block (Q8_0) | Hugging Face `ashbash/Qwen3.8-Flash-Next-MTP-Drafter-GGUF`, `Qwen3.8-Flash-Next-mtp-drafter-Q8_0.gguf` | revision `c82053e8db1eff3f5fcc219c3146fc2ed34258d6`, file sha256 `f2d0834148846c8e5d77ddb4898470936cf35153fac6519095d7e6836a80865a` |
++| BF16 reference | `Qwen/Qwen3.8-Flash-Next` (131 safetensors shards), only the 31 `mtp.*` tensors, by HTTP range reads | revision `de4b8e4d43b917e7706784d8bb445c9af86a3540` (`PINNED_REVISION` in `mtp_fetch.py`), sha256 per tensor in `mtp_fetch.py` |
++| 40K draft vocabulary (optional) | Strata v0.1.40.1 `data/draft_vocab_en.bin` (40,525 token ids) | sha256 `369151522226a5edaa5f12cfd1e2ae7db8f4fbdbd222f3dcf327dced9597fb25` |
++
++The sidecar takes its tensors from the ashbash Q8_0 file. The BF16 fetch is the check: `build_sidecar.py` dequantizes
++every head tensor and compares it with the BF16 truth before it writes anything (rel. error <= 1.5e-2 for Q8_0, norms
++checked as 1+w). A head that does not match is refused.
++
++## Steps
++
++```
++# 1. BF16 reference, ~5.2 GB of range reads (Strata's tool, unchanged)
++python tools/qwen4exp-mtp-sidecar/mtp_fetch.py fetch  --out <bf16-dir>
++python tools/qwen4exp-mtp-sidecar/mtp_fetch.py verify --out <bf16-dir>
++
++# 2. the sidecar (ours): verify the Q8_0 head against BF16, then write
++python tools/qwen4exp-mtp-sidecar/build_sidecar.py --main <IQ3_S-00001-of-00002.gguf> \
++    --head <Qwen3.8-Flash-Next-mtp-drafter-Q8_0.gguf> --bf16 <bf16-dir> \
++    --out mtp-sidecar-qwen4exp-q8_0.gguf
++
++# 3. optional: draft logits over a 40K token subset (ours, Strata's draft-vocabulary design)
++python tools/qwen4exp-mtp-sidecar/make_dvocab_sidecar.py mtp-sidecar-qwen4exp-q8_0.gguf \
++    <strata>/data/draft_vocab_en.bin mtp-sidecar-qwen4exp-q8_0-dven40k.gguf
++```
++
++Both scripts need `numpy` and this repo's `gguf-py` (found relative to the script). Test of the fetch tool:
++`python tools/qwen4exp-mtp-sidecar/test_mtp_fetch.py` (mocked, downloads nothing).
++
++## Outputs
++
++| file | size (bytes) | sha256 |
++|---|---|---|
++| `mtp-sidecar-qwen4exp-q8_0.gguf` | 3642719808 | `0bf164da24ec12f90c0d84c513b3c3c2c77bccf5f448b3a5d7bfa2e5c8940920` |
++| `mtp-sidecar-qwen4exp-q8_0-dven40k.gguf` | 3206674592 | `b0203c9dfc4f4f7c8eeeef2224200c4d19860cdfb67b29e67d39beaa84d497ce` |
++
++These scripts, run from this tree on 2026-10-07, regenerated both files with tensors identical to the files we serve.
++
++## Serve
++
++```
++llama-server -m <IQ3_S-00001-of-00002.gguf> -md mtp-sidecar-qwen4exp-q8_0-dven40k.gguf -ngl 999 -ngld 999 \
++    -fa on --lazy-mode on -lm dio --spec-type draft-mtp --spec-draft-n-max 3 --spec-draft-p-min 0.5
++```
++
++## Credits
++
++`mtp_fetch.py` and `test_mtp_fetch.py` are from Strata (https://github.com/Niko1221/Strata, tag v0.1.40.1,
++commit `82f46a8c8f475f001ad76d92f58f4a4f8ffb0253`), MIT, copied unchanged; license in `licenses/strata-MIT.txt`.
++The draft-vocabulary subset design is also Strata's. The MTP head GGUF is ashbash's (Apache-2.0, from Qwen's
++official BF16 release).
+diff --git a/tools/qwen4exp-mtp-sidecar/build_sidecar.py b/tools/qwen4exp-mtp-sidecar/build_sidecar.py
+new file mode 100644
+index 0000000000..1c4aeb7579
+--- /dev/null
++++ b/tools/qwen4exp-mtp-sidecar/build_sidecar.py
+@@ -0,0 +1,223 @@
++"""Build the qwen4exp MTP sidecar GGUF (loaded with -md <sidecar> --spec-type draft-mtp). See README.md here.
++
++Sources (all read-only):
++  --main   ISTA-DASLab Qwen3.8-Flash-Next-GSQ-RCO IQ3_S shard 00001  (hparams, tokenizer, token_embd, output)
++  --head   ashbash Qwen3.8-Flash-Next-mtp-drafter-Q8_0.gguf           (the MTP block, Q8_0 + F32)
++  --bf16   mtp_fetch.py fetch --out dir                               (SHA-pinned BF16 tensors, the verify reference)
++
++  python build_sidecar.py --main M --head H --bf16 B --verify-only   # dequant compare head vs BF16, no write
++  python build_sidecar.py --main M --head H --bf16 B --out <file>    # verify, then write
++"""
++from __future__ import annotations
++
++import argparse
++import json
++import sys
++from pathlib import Path
++
++import numpy as np
++
++sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "gguf-py"))
++import gguf  # noqa: E402
++from gguf.quants import dequantize  # noqa: E402
++
++MAIN = HEAD = ""
++BF16 = Path(".")
++# written into the sidecar as a constant (not the local path), so the output sha256 does not depend on where files live
++HEAD_SOURCE = "ashbash/Qwen3.8-Flash-Next-MTP-Drafter-GGUF@c82053e8db1eff3f5fcc219c3146fc2ed34258d6/Qwen3.8-Flash-Next-mtp-drafter-Q8_0.gguf"
++L = 48  # the MTP block index = n_layer of the trunk
++
++# ashbash name -> (sidecar name, bf16 tensor, bf16 slice key, norm (+1 expected))
++MAP: dict[str, tuple] = {
++    "mtp.hyper_connection_mixer.norm.weight": ("output_hc_norm.weight", "mtp.hyper_connection_mixer.hc_norm.weight", None, True),
++    "mtp.hyper_connection_mixer.down.weight": ("output_hc_down.weight", "mtp.hyper_connection_mixer.input_mix_weight_down.weight", None, False),
++    "mtp.hyper_connection_mixer.up.weight":   ("output_hc_up.weight",   "mtp.hyper_connection_mixer.input_mix_weight_up.weight", None, False),
++}
++for part, hf in (("hc_attn", "attn_hyper_connection"), ("hc_ffn", "mlp_hyper_connection")):
++    MAP[f"mtp.layers.0.{part}.inject.weight"] = (f"blk.{L}.{part}_inject.weight", f"mtp.layers.0.{hf}.block_inject_weight.weight", None, False)
++    MAP[f"mtp.layers.0.{part}.norm.weight"]   = (f"blk.{L}.{part}_norm.weight",   f"mtp.layers.0.{hf}.hc_norm.weight", None, True)
++    MAP[f"mtp.layers.0.{part}.down.weight"]   = (f"blk.{L}.{part}_down.weight",   f"mtp.layers.0.{hf}.input_mix_weight_down.weight", None, False)
++    MAP[f"mtp.layers.0.{part}.up.weight"]     = (f"blk.{L}.{part}_up.weight",     f"mtp.layers.0.{hf}.input_mix_weight_up.weight", None, False)
++MAP.update({
++    "mtp.layers.0.mlp.switch_mlp.gate_proj.weight": (f"blk.{L}.ffn_gate_exps.weight", "mtp.layers.0.mlp.experts.gate_up_proj", "gate", False),
++    "mtp.layers.0.mlp.switch_mlp.up_proj.weight":   (f"blk.{L}.ffn_up_exps.weight",   "mtp.layers.0.mlp.experts.gate_up_proj", "up", False),
++    "mtp.layers.0.mlp.switch_mlp.down_proj.weight": (f"blk.{L}.ffn_down_exps.weight", "mtp.layers.0.mlp.experts.down_proj", "exp", False),
++    "mtp.layers.0.mlp.gate.weight":                 (f"blk.{L}.ffn_gate_inp.weight",  "mtp.layers.0.mlp.gate.weight", None, False),
++    "mtp.layers.0.mlp.shared_expert_gate.weight":   (f"blk.{L}.ffn_gate_inp_shexp.weight", "mtp.layers.0.mlp.shared_expert_gate.weight", None, False),
++    "mtp.layers.0.mlp.shared_expert.gate_proj.weight": (f"blk.{L}.ffn_gate_shexp.weight", "mtp.layers.0.mlp.shared_expert.gate_proj.weight", None, False),
++    "mtp.layers.0.mlp.shared_expert.up_proj.weight":   (f"blk.{L}.ffn_up_shexp.weight",   "mtp.layers.0.mlp.shared_expert.up_proj.weight", None, False),
++    "mtp.layers.0.mlp.shared_expert.down_proj.weight": (f"blk.{L}.ffn_down_shexp.weight", "mtp.layers.0.mlp.shared_expert.down_proj.weight", None, False),
++    "mtp.layers.0.self_attn.q_proj.weight": (f"blk.{L}.attn_q.weight",      "mtp.layers.0.self_attn.q_proj.weight", None, False),
++    "mtp.layers.0.self_attn.k_proj.weight": (f"blk.{L}.attn_k.weight",      "mtp.layers.0.self_attn.k_proj.weight", None, False),
++    "mtp.layers.0.self_attn.v_proj.weight": (f"blk.{L}.attn_v.weight",      "mtp.layers.0.self_attn.v_proj.weight", None, False),
++    "mtp.layers.0.self_attn.o_proj.weight": (f"blk.{L}.attn_output.weight", "mtp.layers.0.self_attn.o_proj.weight", None, False),
++    "mtp.layers.0.self_attn.q_norm.weight": (f"blk.{L}.attn_q_norm.weight", "mtp.layers.0.self_attn.q_norm.weight", None, True),
++    "mtp.layers.0.self_attn.k_norm.weight": (f"blk.{L}.attn_k_norm.weight", "mtp.layers.0.self_attn.k_norm.weight", None, True),
++    "mtp.pre_fc_norm_embedding.weight": (f"blk.{L}.nextn.enorm.weight", "mtp.pre_fc_norm_embedding.weight", None, True),
++    "mtp.pre_fc_norm_hidden.weight":    (f"blk.{L}.nextn.hnorm.weight", "mtp.pre_fc_norm_hidden.weight", None, True),
++    "mtp.fc_embedding.weight": (None, "mtp.fc_embedding.weight", None, False),   # fused into eh_proj
++    "mtp.fc_hidden.weight":    (None, "mtp.fc_hidden.weight", None, False),
++})
++SKIP = ("mtp.layers.0.self_attn.indexer.",)   # Strata runs the MTP block with dense attention (mtp.cpp:215)
++EXPERTS_CHECKED = (0, 257, 511)
++DROP_KV = ("split.", "qwen4exp.ple.", "qwen4exp.embedding_length_per_layer_input", "GGUF.", "general.architecture")
++
++
++def bf16_load(name: str, shape: tuple, index=None) -> np.ndarray:
++    """BF16 .bin -> f32; index = leading-axis row (one expert) to keep RAM bounded."""
++    path = BF16 / "tensors" / f"{name}.bin"
++    row = int(np.prod(shape[1:])) if index is not None else int(np.prod(shape))
++    raw = np.fromfile(path, dtype=np.uint16, count=row, offset=(index or 0) * row * 2)
++    out = (raw.astype(np.uint32) << 16).view(np.float32)
++    return out.reshape(shape[1:] if index is not None else shape)
++
++
++def deq(t, index=None) -> np.ndarray:
++    data = np.asarray(t.data)
++    if index is not None:
++        data = data[index]
++    if t.tensor_type in (gguf.GGMLQuantizationType.F32, gguf.GGMLQuantizationType.F16):
++        return np.asarray(data, dtype=np.float32)
++    return dequantize(data, t.tensor_type)
++
++
++def rel(a: np.ndarray, b: np.ndarray) -> float:
++    return float(np.linalg.norm((a - b).ravel()) / max(np.linalg.norm(b.ravel()), 1e-30))
++
++
++def verify(head: dict, shapes: dict) -> list[str]:
++    """Each ashbash tensor vs the BF16 truth, in the ggml layout the sidecar writes (numpy shape = reversed ne)."""
++    bad = []
++    for an, (sn, hf, sl, is_norm) in MAP.items():
++        t = head[an]
++        shp = tuple(shapes[hf])
++        if sl in ("gate", "up", "exp"):
++            errs = []
++            for e in EXPERTS_CHECKED:
++                ref = bf16_load(hf, shp, e)
++                if sl == "gate":
++                    ref = ref[: ref.shape[0] // 2]
++                elif sl == "up":
++                    ref = ref[ref.shape[0] // 2:]
++                errs.append(rel(deq(t, e).reshape(ref.shape), ref))
++            err = max(errs)
++        else:
++            ref = bf16_load(hf, shp)
++            got = deq(t).reshape(ref.shape) if deq(t).size == ref.size else None
++            if got is None:
++                bad.append(f"{an}: size {deq(t).size} != {ref.size}")
++                continue
++            if is_norm:
++                e_plus, e_raw = rel(got, ref + 1.0), rel(got, ref)
++                err = e_plus
++                if e_plus > 1e-3:
++                    bad.append(f"{an}: norm not (1+w): rel vs 1+w {e_plus:.2e}, vs w {e_raw:.2e}")
++            else:
++                err = rel(got, ref)
++        limit = 1e-3 if t.tensor_type == gguf.GGMLQuantizationType.F32 else 1.5e-2
++        flag = "OK " if err <= limit else "BAD"
++        if err > limit:
++            bad.append(f"{an}: rel err {err:.3e} > {limit}")
++        print(f"{flag} {an:58s} {t.tensor_type.name:5s} rel_err={err:.3e}")
++    return bad
++
++
++def write(out: str, main: gguf.GGUFReader, head: dict) -> None:
++    w = gguf.GGUFWriter(out, "qwen4exp")
++    for k, f in main.fields.items():
++        if k.startswith(DROP_KV):
++            continue
++        vt = f.types[0]
++        val = f.contents()
++        if k == "qwen4exp.block_count":
++            val = L + 1
++        if k == "qwen4exp.attention.compress_ratios":
++            val = list(val) + [0]          # one entry per layer incl. the MTP block (dense: 0)
++        sub = f.types[-1] if vt == gguf.GGUFValueType.ARRAY else None
++        w.add_key_value(k, val, vt, sub_type=sub)
++    w.add_uint32("qwen4exp.nextn_predict_layers", 1)
++    w.add_string("general.name", "Qwen3.8-Flash-Next MTP sidecar (lane-298)")
++    w.add_string("arifi.mtp_sidecar.head_source", HEAD_SOURCE)
++    w.add_string("arifi.mtp_sidecar.note", "mtp_only: trunk absent; output_hc_* = the MTP hyper_connection_mixer")
++
++    mt = {t.name: t for t in main.tensors}
++    for n in ("token_embd.weight", "output.weight"):
++        t = mt[n]
++        w.add_tensor(n, np.asarray(t.data), raw_dtype=t.tensor_type)
++
++    fe, fh = head["mtp.fc_embedding.weight"], head["mtp.fc_hidden.weight"]
++    assert fe.tensor_type == fh.tensor_type == gguf.GGMLQuantizationType.Q8_0
++    # each row: [fc_embedding | fc_hidden] along ne0, so eh_proj @ concat(e_norm, h_norm) = fe@e + fh@h
++    w.add_tensor(f"blk.{L}.nextn.eh_proj.weight",
++                 np.concatenate([np.asarray(fe.data), np.asarray(fh.data)], axis=-1), raw_dtype=fe.tensor_type)
++
++    for an, (sn, _, _, _) in MAP.items():
++        if sn is None:
++            continue
++        t = head[an]
++        data = np.asarray(t.data)
++        if sn.endswith("ffn_gate_inp_shexp.weight"):
++            data = data.reshape(-1)           # [2560,1] -> {n_embd}
++        if t.tensor_type == gguf.GGMLQuantizationType.F32:
++            w.add_tensor(sn, data.astype(np.float32))
++        else:
++            w.add_tensor(sn, data, raw_dtype=t.tensor_type)
++
++    w.write_header_to_file()
++    w.write_kv_data_to_file()
++    w.write_tensors_to_file(progress=False)
++    w.close()
++
++
++def check_written(out: str) -> None:
++    r = gguf.GGUFReader(out)
++    t = {x.name: x for x in r.tensors}
++    eh = t[f"blk.{L}.nextn.eh_proj.weight"]
++    assert [int(x) for x in eh.shape] == [5120, 2560], eh.shape
++    full = dequantize(np.asarray(eh.data), eh.tensor_type)          # (2560 rows, 5120)
++    head = {x.name: x for x in gguf.GGUFReader(HEAD).tensors}
++    assert np.array_equal(full[:, :2560], deq(head["mtp.fc_embedding.weight"])), "eh_proj first half != fc_embedding"
++    assert np.array_equal(full[:, 2560:], deq(head["mtp.fc_hidden.weight"])), "eh_proj second half != fc_hidden"
++    kv = {k: f for k, f in r.fields.items()}
++    assert kv["qwen4exp.block_count"].contents() == L + 1
++    assert kv["qwen4exp.nextn_predict_layers"].contents() == 1
++    assert len(kv["qwen4exp.attention.compress_ratios"].contents()) == L + 1
++    assert not any(k.startswith("qwen4exp.ple.") for k in kv)
++    print(f"written OK: {len(r.tensors)} tensors, eh_proj halves exact, kv block_count={L + 1}")
++
++
++def main() -> int:
++    global MAIN, HEAD, BF16
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--main", required=True, help="GSQ-RCO IQ3_S shard 00001 gguf")
++    ap.add_argument("--head", required=True, help="ashbash mtp-drafter Q8_0 gguf")
++    ap.add_argument("--bf16", required=True, help="mtp_fetch.py --out dir (tensors/ + mtp-inventory.json)")
++    ap.add_argument("--out")
++    ap.add_argument("--verify-only", action="store_true")
++    a = ap.parse_args()
++    if not a.verify_only and not a.out:
++        ap.error("--out is required unless --verify-only")
++    MAIN, HEAD, BF16 = a.main, a.head, Path(a.bf16)
++    inv = json.load(open(BF16 / "mtp-inventory.json"))
++    rows = inv["tensors"] if isinstance(inv, dict) else inv
++    shapes = {r["name"]: r["shape"] for r in rows}
++    hr = gguf.GGUFReader(HEAD)
++    head = {t.name: t for t in hr.tensors}
++    unmapped = [n for n in head if n not in MAP and not n.startswith(SKIP)]
++    if unmapped:
++        print("UNMAPPED:", unmapped)
++        return 2
++    bad = verify(head, shapes)
++    if bad:
++        print("VERIFY FAILED:\n  " + "\n  ".join(bad))
++        return 1
++    print("VERIFY PASS")
++    if a.verify_only:
++        return 0
++    write(a.out, gguf.GGUFReader(MAIN), head)
++    check_written(a.out)
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/tools/qwen4exp-mtp-sidecar/make_dvocab_sidecar.py b/tools/qwen4exp-mtp-sidecar/make_dvocab_sidecar.py
+new file mode 100644
+index 0000000000..085e472452
+--- /dev/null
++++ b/tools/qwen4exp-mtp-sidecar/make_dvocab_sidecar.py
+@@ -0,0 +1,61 @@
++"""Write a qwen4exp MTP sidecar whose output head covers only a Strata draft_vocab.bin token subset (+ d2t I64 map).
++
++usage: make_dvocab_sidecar.py <in.gguf> <draft_vocab.bin> <out.gguf> [--red]
++--red rolls d2t by one (each subset row labelled with its neighbour's id): drafts become wrong, output must not change.
++"""
++import sys
++from pathlib import Path
++import numpy as np
++sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'gguf-py'))
++import gguf
++
++src, dv_path, dst = sys.argv[1:4]
++red = '--red' in sys.argv
++
++ids = np.fromfile(dv_path, dtype='<i4')
++r = gguf.GGUFReader(src)
++out_t = next(t for t in r.tensors if t.name == 'output.weight')
++n_vocab = int(out_t.shape[1])
++assert ids.ndim == 1 and len(ids) > 0
++assert ids.min() >= 0 and ids.max() < n_vocab, (ids.min(), ids.max(), n_vocab)
++assert len(np.unique(ids)) == len(ids), 'duplicate ids in draft vocab'
++
++w = gguf.GGUFWriter(dst, arch=r.fields['general.architecture'].contents(), endianess=r.endianess)
++for f in r.fields.values():
++    if f.name == gguf.Keys.General.ARCHITECTURE or f.name.startswith('GGUF.'):
++        continue
++    vt = f.types[0]
++    st = f.types[-1] if vt == gguf.GGUFValueType.ARRAY else None
++    w.add_key_value(f.name, f.contents(), vt, sub_type=st)
++
++d2t = ids.astype(np.int64)
++if red:
++    d2t = np.roll(d2t, 1)
++
++tensors = []
++for t in r.tensors:
++    data = t.data
++    if t.name == 'output.weight':
++        # quantized rows are byte-contiguous (Q6_K: 2560/256 = 10 blocks per row), so a row gather is exact
++        data = np.ascontiguousarray(data[ids.astype(np.int64)])
++        assert data.shape[0] == len(ids)
++    tensors.append((t.name, data, t.tensor_type))
++tensors.append(('d2t', d2t, gguf.GGMLQuantizationType.I64))
++
++for name, data, tt in tensors:
++    w.add_tensor_info(name, data.shape, data.dtype, data.nbytes, tt)
++w.write_header_to_file()
++w.write_kv_data_to_file()
++w.write_ti_data_to_file()
++for name, data, tt in tensors:
++    w.write_tensor_data(data, tensor_endianess=r.endianess)
++w.close()
++
++# readback self-check: subset row k == source row ids[k]; d2t round-trips
++r2 = gguf.GGUFReader(dst)
++o2 = next(t for t in r2.tensors if t.name == 'output.weight')
++m2 = next(t for t in r2.tensors if t.name == 'd2t')
++for k in (0, len(ids) // 2, len(ids) - 1):
++    assert np.array_equal(o2.data[k], out_t.data[ids[k]]), k
++assert np.array_equal(np.asarray(m2.data).reshape(-1), d2t)
++print(f'OK {dst}: {len(ids)} of {n_vocab} rows, head {o2.n_bytes/1e6:.1f} MB (was {out_t.n_bytes/1e6:.1f}), red={red}')
+diff --git a/tools/qwen4exp-mtp-sidecar/mtp_fetch.py b/tools/qwen4exp-mtp-sidecar/mtp_fetch.py
+new file mode 100644
+index 0000000000..eb1b7ce615
+--- /dev/null
++++ b/tools/qwen4exp-mtp-sidecar/mtp_fetch.py
+@@ -0,0 +1,308 @@
++"""tools/mtp_fetch.py - plan v0.3, P0.3/P6: the MTP block from the BF16 checkpoint, without the checkpoint.
++
++The GSQ-RCO GGUF ships no MTP head. The BF16 checkpoint (Qwen/Qwen3.8-Flash-Next, 360 GB in 131 shards) does:
++31 `mtp.*` tensors scattered over 28 shards. Safetensors puts a JSON header (name -> dtype, shape, byte range)
++at the start of each shard, so HTTP range requests can read the headers and then only the MTP tensors.
++
++    python tools/mtp_fetch.py inventory --out DIR          # headers only (a few KB per shard)
++    python tools/mtp_fetch.py fetch --out DIR [--only SUBSTR]  # the MTP tensors themselves, resumable
++    python tools/mtp_fetch.py verify --out DIR             # the fetched tensors against SHA256 (exit 3: bad ones)
++
++`fetch` writes one raw file per tensor plus `mtp-manifest.json` (dtype, shape, source shard, byte range,
++sha256). It never downloads anything but the ranges named in the headers. Nothing here runs a model.
++
++#327: a mirror or proxy that ignores the Range header answers 200 with the whole shard - its JSON header and
++unrelated tensors - and a proxy may cut that to the requested length, so neither the size nor a hash of what was
++downloaded catches it (the drafter then accepts nothing, silently).  A range read therefore needs a 206 whose
++Content-Range is the range asked for, and every tensor of the pinned revision is checked against SHA256 below.
++"""
++import argparse
++import hashlib
++import json
++import os
++import struct
++import sys
++import time
++import urllib.error
++import urllib.request
++
++# #214: a fixed commit of the checkpoint (its `sha` from https://huggingface.co/api/models/Qwen/Qwen3.8-Flash-Next
++# on 2026-09-30), so every install reads the same tensors; STRATA_MTP_REVISION overrides it (e.g. main).  When the
++# repository no longer has it, the current files are read instead, with a message (resolve_repo).
++PINNED_REVISION = "de4b8e4d43b917e7706784d8bb445c9af86a3540"
++REVISION = os.environ.get("STRATA_MTP_REVISION") or PINNED_REVISION
++# #495: HF_ENDPOINT (a mirror, e.g. https://hf-mirror.com) serves the same revision; the SHA256 checks below still apply
++HF_ENDPOINT = (os.environ.get("HF_ENDPOINT") or "").strip().rstrip("/") or "https://huggingface.co"
++REPO = HF_ENDPOINT + "/Qwen/Qwen3.8-Flash-Next/resolve/%s/" % REVISION
++PINNED = HF_ENDPOINT + "/Qwen/Qwen3.8-Flash-Next/resolve/%s/" % PINNED_REVISION   # SHA256's revision
++DTYPE_BYTES = {"BF16": 2, "F16": 2, "F32": 4, "F8_E4M3": 1, "I64": 8, "I32": 4}
++BAD = 3                                             # `verify`'s exit code: a tensor is missing or corrupt
++
++# #327: sha256 of every MTP tensor's bytes at PINNED_REVISION (two independent fetches agree, and 29 of them were read
++# again from that revision; the two expert tensors' first and last 16 MiB), so a mirror that ignored the
++# Range header (it sent the shard's start: its JSON header) is caught, and an install it corrupted is fetched again.
++SHA256 = {
++    "mtp.fc_embedding.weight":
++        "241d6e87ded317a61b1aeb3ca4e28c53f1caba09ad5be66092e91fe5e3e14751",
++    "mtp.fc_hidden.weight":
++        "97c8e427ad0177e2c713ed24a397d815b523eda15ef453f1ae6463f6c70a8f96",
++    "mtp.hyper_connection_mixer.hc_norm.weight":
++        "ce948a398e15aeaa403c424cda34e6eed296ab2570d591bb5ff3da642b255d64",
++    "mtp.hyper_connection_mixer.input_mix_weight_down.weight":
++        "c633d2841fda463e82045e0b93fb8cb8d511ec0c9eda616020f01aca18d71947",
++    "mtp.hyper_connection_mixer.input_mix_weight_up.weight":
++        "6565285f0ba2923703252763cfc11d8a9bda40ab42e7548e12464b04dbdbec13",
++    "mtp.layers.0.attn_hyper_connection.block_inject_weight.weight":
++        "c8afff64e7f54412d02120097c4255033c55245e1c1eed84cc630d428ccb864c",
++    "mtp.layers.0.attn_hyper_connection.hc_norm.weight":
++        "1fb619aeaaf637ccd70f46f1f8f8116e6a46448cb43026b246de8ee8286ed809",
++    "mtp.layers.0.attn_hyper_connection.input_mix_weight_down.weight":
++        "e80ac8bf3e270e9d5a949ec7c913329dc8de017d69851334820fae7b8c86a7f5",
++    "mtp.layers.0.attn_hyper_connection.input_mix_weight_up.weight":
++        "f80f1fd44e1183e7764ea496b11ff89ead9dd758f861d4e79a770bf54956b1a5",
++    "mtp.layers.0.mlp.experts.down_proj":
++        "539c46234f73bac70450f731f40e715f77ac32faf77def0f3f800e58aaabbbc0",
++    "mtp.layers.0.mlp.experts.gate_up_proj":
++        "839e98f9642ebc884b178abd2090b6dc8b0bcd81ed92d7f7a08314c6a68f96d5",
++    "mtp.layers.0.mlp.gate.weight":
++        "f0d35fa41b360a08bc0c5b1e5766aa42df960291716ee189208b5d2599462c20",
++    "mtp.layers.0.mlp.shared_expert.down_proj.weight":
++        "d2ced8c81367cc494599d1a8cdc279c3dd6579b628ded05acd7495e99cee01d8",
++    "mtp.layers.0.mlp.shared_expert.gate_proj.weight":
++        "f4a81109165853b3b64f36d809f98094b599763364070f5fa079200e1c386d4c",
++    "mtp.layers.0.mlp.shared_expert.up_proj.weight":
++        "172586861eea53efbff10afc43ded5b6e49c83879e9efc01e089c652bbb0a156",
++    "mtp.layers.0.mlp.shared_expert_gate.weight":
++        "acdd306d9996d356e4667a16ff63af6fef086fc7f570f1bc00bbe882a2a93f6e",
++    "mtp.layers.0.mlp_hyper_connection.block_inject_weight.weight":
++        "c5782dd92b479a1f8ef43d683fe9c917fd9e8fba81f23c1aae8817bfe4b476a6",
++    "mtp.layers.0.mlp_hyper_connection.hc_norm.weight":
++        "21a504876b5e7b788301557c68dfb757999430eba36c66ec8ab96a63604dbfd1",
++    "mtp.layers.0.mlp_hyper_connection.input_mix_weight_down.weight":
++        "b71240036dea954e034d5ae04e097bcd7ac51cb28a44e4c93d198af3447278a1",
++    "mtp.layers.0.mlp_hyper_connection.input_mix_weight_up.weight":
++        "40756866bf2a5e82c28e407f717b6fa07614d593f78e79c7ceb2cd4ffe6dda94",
++    "mtp.layers.0.self_attn.indexer.index_qk_proj.weight":
++        "2befafae6e944c1fc651fd73d4d527eb6f138a6c1679065b003128ee3150e859",
++    "mtp.layers.0.self_attn.indexer.k_layernorm.weight":
++        "2db621f6a08b4085756fc69d60a4a1bd1d7fbf5d406456d2477075842efaae54",
++    "mtp.layers.0.self_attn.indexer.q_layernorm.weight":
++        "afaf59f68e251939970ffdeacad0667dffc657a522bea62cdc44a52816fc49d6",
++    "mtp.layers.0.self_attn.k_norm.weight":
++        "8f924b0357cf936e14fc34518205d000e1423aa60626827df81b0804fae8cdfd",
++    "mtp.layers.0.self_attn.k_proj.weight":
++        "1a295dc2d6e633e808aeb19e00c97856a1817bbfcc83f5b610e2bfcacfcb8c38",
++    "mtp.layers.0.self_attn.o_proj.weight":
++        "9d2fcf0ac6ac19de87f638f710cfd1af6ad14141e75b7d3d5d29fbd06f374219",
++    "mtp.layers.0.self_attn.q_norm.weight":
++        "57957aa1e7c5a3ac628bff0ec5522ad55a39b8c0b8bd2d324ae640e3771617ef",
++    "mtp.layers.0.self_attn.q_proj.weight":
++        "5220aef3d288f40759f7356af9ef453e5ac0256a38749a9bb803a4e9db58150d",
++    "mtp.layers.0.self_attn.v_proj.weight":
++        "39cb12f5424e965fa71fb81db0ee230c701b7b1e0b72c36641fde7e0e41bff41",
++    "mtp.pre_fc_norm_embedding.weight":
++        "04c4a570850e06f2d8913da8220d54d4c7f87db6eb6d45480b938e8ba41d6a86",
++    "mtp.pre_fc_norm_hidden.weight":
++        "b933b44559879449b1baf2af8385c5c237347307e3fd452394870cb53e6eab6d",
++}
++
++
++def get(url, start=None, end=None, retries=4):
++    for attempt in range(retries):
++        try:
++            req = urllib.request.Request(url, headers={"User-Agent": "strata-mtp-fetch"})
++            if start is not None:
++                req.add_header("Range", "bytes=%d-%d" % (start, end))
++            with urllib.request.urlopen(req, timeout=120) as r:
++                if start is not None:
++                    check_range(r.status, r.headers.get("Content-Range"), start, end)
++                data = r.read()
++            if start is not None and len(data) != end - start + 1:
++                raise IOError("short range read: %d of %d" % (len(data), end - start + 1))
++            return data
++        except Exception as e:  # network errors are retried, then surfaced
++            if attempt == retries - 1:
++                raise
++            time.sleep(2 ** attempt)
++            print("retry %s: %s" % (url, e), file=sys.stderr)
++
++
++def check_range(status, content_range, start, end):
++    """#327: a range read is only what was asked for when the server says so: 206 and `bytes START-END/...`."""
++    if status != 206:
++        raise IOError("range request not honoured: HTTP %s instead of 206 (a mirror or proxy that ignores the Range "
++                      "header sends the whole file)" % status)
++    want = "bytes %d-%d/" % (start, end)
++    if not (content_range or "").strip().startswith(want):
++        raise IOError("range request answered with Content-Range %r, not %s..." % (content_range, want))
++
++
++def pinned():
++    """The tensors' hashes are the pinned revision's: they apply when this run reads that revision."""
++    return REPO == PINNED
++
++
++def sha256_of(path):
++    h = hashlib.sha256()
++    with open(path, "rb") as f:
++        for block in iter(lambda: f.read(1 << 24), b""):
++            h.update(block)
++    return h.hexdigest()
++
++
++def resolve_repo():
++    """REPO, or the repository's current files when the pinned revision is gone from it (a 404 on its index)."""
++    global REPO
++    try:
++        req = urllib.request.Request(REPO + "model.safetensors.index.json", method="HEAD",
++                                     headers={"User-Agent": "strata-mtp-fetch"})
++        urllib.request.urlopen(req, timeout=120).close()
++    except urllib.error.HTTPError as e:
++        if e.code == 404 and "/resolve/main/" not in REPO:
++            print("the checkpoint's pinned revision %s is gone: reading its current files (main)" % REVISION,
++                  file=sys.stderr)
++            REPO = REPO.replace("/resolve/%s/" % REVISION, "/resolve/main/")
++    except OSError:
++        pass                                        # no answer: get() retries and reports it
++    return REPO
++
++
++def shard_header(shard):
++    url = REPO + shard
++    n = struct.unpack("<Q", get(url, 0, 7))[0]
++    header = json.loads(get(url, 8, 8 + n - 1))
++    return 8 + n, header
++
++
++def inventory(out):
++    index = json.loads(get(REPO + "model.safetensors.index.json"))["weight_map"]
++    mtp = {k: v for k, v in index.items() if k.startswith("mtp.")}
++    rows, total = [], 0
++    for shard in sorted(set(mtp.values())):
++        base, header = shard_header(shard)
++        for name, meta in header.items():
++            if name in mtp and mtp[name] == shard:
++                a, b = meta["data_offsets"]
++                rows.append(dict(name=name, shard=shard, dtype=meta["dtype"], shape=meta["shape"],
++                                 start=base + a, end=base + b - 1, bytes=b - a))
++                total += b - a
++    missing = sorted(set(mtp) - set(r["name"] for r in rows))
++    if missing:
++        sys.exit("tensors named in the index but absent from their shard headers: %s" % missing)
++    rows.sort(key=lambda r: r["name"])
++    os.makedirs(out, exist_ok=True)
++    with open(os.path.join(out, "mtp-inventory.json"), "w", encoding="utf-8") as f:
++        json.dump(dict(repo=REPO, total_bytes=total, tensors=rows), f, indent=1)
++    lines = ["# MTP block in the BF16 checkpoint", "", "%d tensors, %.3f GB, in %d shards." % (len(rows), total / 1e9, len(set(r["shard"] for r in rows))), "",
++             "| tensor | dtype | shape | MB |", "|---|---|---|---:|"]
++    for r in rows:
++        lines.append("| `%s` | %s | %s | %.1f |" % (r["name"], r["dtype"], "x".join(map(str, r["shape"])), r["bytes"] / 1e6))
++    text = "\n".join(lines) + "\n"
++    with open(os.path.join(out, "mtp-inventory.md"), "w", encoding="utf-8") as f:
++        f.write(text)
++    print(text)
++    return rows
++
++
++def fetch(out, only):
++    inv_path = os.path.join(out, "mtp-inventory.json")
++    tdir = os.path.join(out, "tensors")
++    inv = None
++    if os.path.exists(inv_path):
++        try:
++            with open(inv_path, encoding="utf-8") as f:
++                inv = json.load(f)
++        except ValueError:
++            inv = None
++    # The byte ranges belong to one revision: an inventory read from another repository or revision is read again,
++    # and a tensor fetched from there is not resumed - it is kept only when it is the pinned revision's (sha256).
++    same = isinstance(inv, dict) and inv.get("repo") == REPO
++    rows = inv["tensors"] if same else inventory(out)
++    os.makedirs(tdir, exist_ok=True)
++    manifest = []
++    chunk = 64 << 20
++    for r in rows:
++        if only and only not in r["name"]:
++            continue
++        path = os.path.join(tdir, r["name"] + ".bin")
++        want = SHA256.get(r["name"]) if pinned() else None
++        if os.path.exists(path) and not same and (
++                want is None or os.path.getsize(path) != r["bytes"] or sha256_of(path) != want):
++            os.remove(path)
++        for attempt in range(2):
++            have = os.path.getsize(path) if os.path.exists(path) else 0
++            if have > r["bytes"]:
++                os.remove(path)
++                have = 0
++            with open(path, "ab") as f:
++                pos = r["start"] + have
++                while pos <= r["end"]:
++                    end = min(pos + chunk - 1, r["end"])
++                    f.write(get(REPO + r["shard"], pos, end))
++                    pos = end + 1
++                    print("%s %.0f%%" % (r["name"], 100 * (pos - r["start"]) / r["bytes"]), file=sys.stderr)
++            if os.path.getsize(path) != r["bytes"]:
++                sys.exit("%s: size %d != %d" % (path, os.path.getsize(path), r["bytes"]))
++            digest = sha256_of(path)
++            if want is None or digest == want:
++                break
++            os.remove(path)                         # wrong bytes (#327): the whole tensor again, once
++            if attempt:
++                sys.exit("%s: sha256 %s is not the checkpoint's %s - the download source sends wrong data (a mirror "
++                         "that ignores Range requests?)" % (r["name"], digest, want))
++            print("%s: wrong bytes (sha256 %s...), fetching it again" % (r["name"], digest[:12]), file=sys.stderr)
++        manifest.append(dict(r, file=os.path.relpath(path, out), sha256=digest))
++    with open(os.path.join(out, "mtp-manifest.json"), "w", encoding="utf-8") as f:
++        json.dump(manifest, f, indent=1)
++
++
++def verify(out):
++    """#327: the fetched tensors against SHA256 -> the names that are missing or wrong.  [] when they are right, or
++    when there is nothing to check (no tensors/, or STRATA_MTP_REVISION names another revision).  A tensor's verdict
++    is kept in tensors/verified.json by size and mtime, so a later run hashes only what changed."""
++    tdir = os.path.join(out, "tensors")
++    if not pinned() or not os.path.isdir(tdir):
++        return []
++    stamp_path = os.path.join(tdir, "verified.json")
++    try:
++        with open(stamp_path, encoding="utf-8") as f:
++            stamps = json.load(f)
++    except (OSError, ValueError):
++        stamps = {}
++    bad, good = [], {}
++    for name, want in sorted(SHA256.items()):
++        path = os.path.join(tdir, name + ".bin")
++        if not os.path.exists(path):
++            bad.append(name)
++            continue
++        st = os.stat(path)
++        key = [st.st_size, st.st_mtime_ns, want]
++        if stamps.get(name) != key and sha256_of(path) != want:
++            bad.append(name)
++            continue
++        good[name] = key
++    try:
++        with open(stamp_path, "w", encoding="utf-8") as f:
++            json.dump(good, f, indent=1)
++    except OSError:
++        pass
++    return bad
++
++
++def main():
++    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    ap.add_argument("cmd", choices=["inventory", "fetch", "verify"])
++    ap.add_argument("--out", required=True)
++    ap.add_argument("--only")
++    a = ap.parse_args()
++    if a.cmd == "verify":                           # offline: the hashes are the pinned revision's
++        bad = verify(a.out)
++        for name in bad:
++            print("MTP tensor missing or corrupt: %s" % name, file=sys.stderr)
++        sys.exit(BAD if bad else 0)
++    resolve_repo()
++    inventory(a.out) if a.cmd == "inventory" else fetch(a.out, a.only)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/tools/qwen4exp-mtp-sidecar/test_mtp_fetch.py b/tools/qwen4exp-mtp-sidecar/test_mtp_fetch.py
+new file mode 100644
+index 0000000000..f6c442fae7
+--- /dev/null
++++ b/tools/qwen4exp-mtp-sidecar/test_mtp_fetch.py
+@@ -0,0 +1,201 @@
++"""Tests for tools/mtp_fetch.py (#327): a range read needs a 206 with the asked Content-Range, the pinned revision's
++tensors are checked against their sha256 (a wrong one is fetched again; a corrupt install is found by `verify` and
++setup fetches it again), and an inventory from another revision is read again.  A fake checkpoint behind a mocked
++urlopen - nothing is downloaded.
++
++    python -m unittest tools.test_mtp_fetch
++"""
++from __future__ import annotations
++
++import contextlib
++import hashlib
++import io
++import json
++import os
++import struct
++import sys
++import tempfile
++import unittest
++from pathlib import Path
++from unittest import mock
++
++ROOT = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(ROOT))
++sys.path.insert(0, str(ROOT / "tools"))
++import mtp_fetch as M  # noqa: E402
++
++
++def shard(tensors):
++    """A safetensors file: [u64 header length][JSON header][data]."""
++    header, data = {}, b""
++    for name, blob in tensors:
++        header[name] = {"dtype": "BF16", "shape": [len(blob) // 2], "data_offsets": [len(data), len(data) + len(blob)]}
++        data += blob
++    h = json.dumps(header).encode()
++    return struct.pack("<Q", len(h)) + h + data
++
++
++A, B, X = bytes(range(64)), bytes(range(100, 164)) * 2, b"\x07" * 48
++FILES = {"model-1.safetensors": shard([("model.x", X), ("mtp.a", A)]), "model-2.safetensors": shard([("mtp.b", B)])}
++INDEX = json.dumps({"weight_map": {"model.x": "model-1.safetensors", "mtp.a": "model-1.safetensors",
++                                   "mtp.b": "model-2.safetensors"}}).encode()
++HASHES = {"mtp.a": hashlib.sha256(A).hexdigest(), "mtp.b": hashlib.sha256(B).hexdigest()}
++
++
++class Response(io.BytesIO):
++    def __init__(self, body, status, headers):
++        super().__init__(body)
++        self.status, self.headers = status, headers
++
++    def __enter__(self):
++        return self
++
++    def __exit__(self, *exc):
++        self.close()
++
++
++class Mirror:
++    """urlopen for the fake checkpoint.  `ignore_range`: 200 and the whole file (`cut`: cut to the asked length, as
++    the proxy in #327 did); `wrong`: the bytes of these tensors' ranges are flipped (a source that sends bad data)."""
++
++    def __init__(self, ignore_range=False, cut=False, wrong=()):
++        self.ignore_range, self.cut, self.wrong, self.ranges = ignore_range, cut, set(wrong), []
++
++    def __call__(self, req, timeout=None):
++        name = req.full_url.rsplit("/", 1)[1]
++        body = INDEX if name == "model.safetensors.index.json" else FILES[name]
++        rng = req.get_header("Range")
++        if rng is None:
++            return Response(body, 200, {"Content-Length": str(len(body))})
++        a, b = map(int, rng.split("=")[1].split("-"))
++        self.ranges.append((name, a, b))
++        if self.ignore_range:
++            return Response(body[:b - a + 1] if self.cut else body, 200, {})
++        part = body[a:b + 1]
++        if any(t in self.wrong and self.span(name, t) == (a, b) for t in ("mtp.a", "mtp.b")):
++            part = bytes(x ^ 0xFF for x in part)
++        return Response(part, 206, {"Content-Range": "bytes %d-%d/%d" % (a, b, len(body))})
++
++    @staticmethod
++    def span(name, tensor):
++        raw = FILES[name]
++        n = struct.unpack("<Q", raw[:8])[0]
++        meta = json.loads(raw[8:8 + n]).get(tensor)
++        return (8 + n + meta["data_offsets"][0], 8 + n + meta["data_offsets"][1] - 1) if meta else None
++
++
++class FetchCase(unittest.TestCase):
++    def setUp(self):
++        self.tmp = tempfile.TemporaryDirectory()
++        self.out = Path(self.tmp.name)
++        self.patches = [mock.patch.object(M, "SHA256", HASHES), mock.patch.object(M.time, "sleep", lambda s: None),
++                        mock.patch.object(M, "REPO", M.PINNED)]
++        for p in self.patches:
++            p.start()
++
++    def tearDown(self):
++        for p in reversed(self.patches):
++            p.stop()
++        self.tmp.cleanup()
++
++    def fetch(self, mirror):
++        with mock.patch.object(M.urllib.request, "urlopen", mirror), contextlib.redirect_stdout(io.StringIO()), \
++                contextlib.redirect_stderr(io.StringIO()) as err:
++            M.fetch(str(self.out), None)
++        return err.getvalue()
++
++    def tensor(self, name):
++        return (self.out / "tensors" / (name + ".bin")).read_bytes()
++
++
++class Ranges(FetchCase):
++    def test_check_range(self):
++        M.check_range(206, "bytes 10-19/100", 10, 19)
++        for status, cr in ((200, None), (200, "bytes 10-19/100"), (206, "bytes 0-9/100"), (206, None)):
++            with self.subTest(status=status, cr=cr), self.assertRaises(IOError):
++                M.check_range(status, cr, 10, 19)
++
++    def test_a_mirror_that_ignores_range_is_refused(self):
++        for cut in (False, True):                 # the whole file, or cut to the asked length (#327's proxy)
++            with self.subTest(cut=cut), mock.patch.object(M.urllib.request, "urlopen", Mirror(True, cut)), \
++                    contextlib.redirect_stderr(io.StringIO()), self.assertRaisesRegex(IOError, "not honoured"):
++                M.get(M.REPO + "model-1.safetensors", 8, 15)
++
++    def test_fetch_from_an_honest_mirror(self):
++        self.fetch(Mirror())
++        self.assertEqual((self.tensor("mtp.a"), self.tensor("mtp.b")), (A, B))
++        manifest = json.loads((self.out / "mtp-manifest.json").read_text())
++        self.assertEqual({r["name"]: r["sha256"] for r in manifest}, HASHES)
++        self.assertEqual(M.verify(str(self.out)), [])
++
++    def test_wrong_bytes_are_fetched_again_once_then_refused(self):
++        self.fetch(Mirror())
++        bad = bytes(len(A))                       # an install the #327 mirror corrupted: right size, wrong bytes
++        (self.out / "tensors" / "mtp.a.bin").write_bytes(bad)
++        self.assertEqual(M.verify(str(self.out)), ["mtp.a"])
++        err = self.fetch(Mirror())                # setup runs fetch again: the bad one is fetched again
++        self.assertIn("mtp.a: wrong bytes", err)
++        self.assertEqual(self.tensor("mtp.a"), A)
++        self.assertEqual(M.verify(str(self.out)), [])
++        os.remove(self.out / "tensors" / "mtp.b.bin")
++        with self.assertRaises(SystemExit) as cm:
++            self.fetch(Mirror(wrong={"mtp.b"}))     # a source that keeps sending wrong data
++        self.assertIn("is not the checkpoint's", str(cm.exception))
++        self.assertFalse((self.out / "tensors" / "mtp.b.bin").exists())
++
++    def test_an_inventory_from_another_revision_is_read_again(self):
++        self.fetch(Mirror())
++        inv = json.loads((self.out / "mtp-inventory.json").read_text())
++        inv["repo"] = "https://huggingface.co/Qwen/Qwen3.8-Flash-Next/resolve/main/"
++        for r in inv["tensors"]:
++            r["start"] += 1                        # that revision's ranges: not this one's
++            r["end"] += 1
++        (self.out / "mtp-inventory.json").write_text(json.dumps(inv))
++        (self.out / "tensors" / "mtp.b.bin").write_bytes(B[:10])     # half a tensor from that revision
++        mirror = Mirror()
++        self.fetch(mirror)
++        self.assertEqual(json.loads((self.out / "mtp-inventory.json").read_text())["repo"], M.REPO)
++        self.assertEqual((self.tensor("mtp.a"), self.tensor("mtp.b")), (A, B))
++        fetched = [r for r in mirror.ranges if r[2] - r[1] + 1 in (len(A), len(B))]
++        self.assertEqual(fetched, [("model-2.safetensors",) + Mirror.span("model-2.safetensors", "mtp.b")],
++                         "mtp.a was right and is kept; mtp.b is fetched whole")
++
++    def test_verify_keeps_its_verdict_and_skips_other_revisions(self):
++        self.fetch(Mirror())
++        self.assertEqual(M.verify(str(self.out)), [])
++        stamps = json.loads((self.out / "tensors" / "verified.json").read_text())
++        self.assertEqual(sorted(stamps), ["mtp.a", "mtp.b"])
++        with mock.patch.object(M, "sha256_of", side_effect=AssertionError("hashed an unchanged file")):
++            self.assertEqual(M.verify(str(self.out)), [])
++        with mock.patch.object(M, "REPO", "https://huggingface.co/Qwen/Qwen3.8-Flash-Next/resolve/main/"):
++            (self.out / "tensors" / "mtp.a.bin").write_bytes(b"x")
++            self.assertEqual(M.verify(str(self.out)), [])          # STRATA_MTP_REVISION: other hashes
++        self.assertEqual(M.verify(str(self.out)), ["mtp.a"])
++        self.assertEqual(M.verify(str(self.out / "nothing")), [])
++
++
++class Pinned(unittest.TestCase):
++    def test_every_tensor_has_a_hash(self):
++        self.assertEqual(len(M.SHA256), 31)
++        for name, h in M.SHA256.items():
++            self.assertTrue(name.startswith("mtp."))
++            self.assertRegex(h, "^[0-9a-f]{64}$")
++        self.assertIn(M.PINNED_REVISION, M.PINNED)
++
++
++class Setup(unittest.TestCase):
++    def test_setup_rebuilds_a_corrupt_install(self):
++        import setup
++        with tempfile.TemporaryDirectory() as d:
++            mtp = Path(d)
++            self.assertFalse(setup.mtp_corrupt(mtp))              # no tensors kept: nothing to check
++            (mtp / "tensors").mkdir()
++            for code, want in ((0, False), (3, True), (1, False)):
++                with self.subTest(code=code), mock.patch.object(
++                        setup.subprocess, "run", return_value=mock.Mock(returncode=code)) as run:
++                    self.assertEqual(setup.mtp_corrupt(mtp), want)
++                    self.assertIn("verify", run.call_args[0][0])
++
++
++if __name__ == "__main__":
++    unittest.main()

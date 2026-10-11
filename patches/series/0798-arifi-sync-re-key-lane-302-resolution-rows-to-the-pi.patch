@@ -1,0 +1,311 @@
+From 466b8965f069e97ba4442304fd9ea69926902060 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 07:18:05 -0400
+Subject: [PATCH] arifi-sync: re-key lane 302 resolution rows to the picked
+ tip; QSA mask fusion row
+
+HQ85 Q69 ruling (a) LINEARIZE: lane 302's commits 33f8ae3037..e4793036c1 were
+picked onto lane-298/v0132 (the release series must stay linear). Its 29
+resolution rows bound by sha (incoming 33f8ae3037 / f95422f397) now name the
+picked tip, so `protected-win check --incoming <picked tip>` matches them.
+Adds the HQ85-authored row for vulkan-qsa-mask-fa-fusion (lane 301 lever 4,
+in v0.1.3.1, not on integ): the range adds only default-OFF env-gated code
+and a banner field; no line of the QSA mask fusion changes.
+
+Origin: lane-298 (rows by lane-302; QSA row authored by HQ85)
+Measured-effect: NO RUNTIME EFFECT - metadata only; receipt cache/mtp-x1-lane/cells/v0132-302-pwcheck-pre-rekey.txt
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../arifi-sync/protected-win-resolutions.json | 76 ++++++++++++-------
+ 1 file changed, 47 insertions(+), 29 deletions(-)
+
+diff --git a/tools/arifi-sync/protected-win-resolutions.json b/tools/arifi-sync/protected-win-resolutions.json
+index 2ec4673eff..f438ffae74 100644
+--- a/tools/arifi-sync/protected-win-resolutions.json
++++ b/tools/arifi-sync/protected-win-resolutions.json
+@@ -1270,7 +1270,7 @@
+     },
+     {
+       "win_id": "vulkan-moe-gather-slot-major-matvec-id",
+-      "incoming": "33f8ae30373c5b79645d809d42a2adc4b717b9d0",
++      "incoming": "e7f8fbf50893873ca1d64bcc7be4b19cb6a8aeb6",
+       "verdict": "adopt-union",
+       "arms": {
+         "upstream": "inapplicable: lever 10 is a fork-internal lane-302 change to gather_setup in mul_mat_vec_base.glsl, not an upstream ingest",
+@@ -1289,7 +1289,7 @@
+     },
+     {
+       "win_id": "vulkan-concat-transpose-deltanet",
+-      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "incoming": "e7f8fbf50893873ca1d64bcc7be4b19cb6a8aeb6",
+       "verdict": "adopt-union",
+       "arms": {
+         "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
+@@ -1309,7 +1309,7 @@
+     },
+     {
+       "win_id": "vulkan-tq-matvec-subgroup",
+-      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "incoming": "e7f8fbf50893873ca1d64bcc7be4b19cb6a8aeb6",
+       "verdict": "adopt-union",
+       "arms": {
+         "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
+@@ -1329,7 +1329,7 @@
+     },
+     {
+       "win_id": "vulkan-escha-mm-column-block",
+-      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "incoming": "e7f8fbf50893873ca1d64bcc7be4b19cb6a8aeb6",
+       "verdict": "adopt-union",
+       "arms": {
+         "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
+@@ -1349,7 +1349,7 @@
+     },
+     {
+       "win_id": "vulkan-iq4xs-matvec-dedicated",
+-      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "incoming": "e7f8fbf50893873ca1d64bcc7be4b19cb6a8aeb6",
+       "verdict": "adopt-union",
+       "arms": {
+         "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
+@@ -1369,7 +1369,7 @@
+     },
+     {
+       "win_id": "vulkan-rocmfp4-fast-q8_1-mmvq",
+-      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "incoming": "e7f8fbf50893873ca1d64bcc7be4b19cb6a8aeb6",
+       "verdict": "adopt-union",
+       "arms": {
+         "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
+@@ -1389,7 +1389,7 @@
+     },
+     {
+       "win_id": "vulkan-fa-dequant-kv-runtime-gate",
+-      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "incoming": "e7f8fbf50893873ca1d64bcc7be4b19cb6a8aeb6",
+       "verdict": "adopt-union",
+       "arms": {
+         "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
+@@ -1409,7 +1409,7 @@
+     },
+     {
+       "win_id": "vulkan-rdna3-mmv-id-rows-switch",
+-      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "incoming": "e7f8fbf50893873ca1d64bcc7be4b19cb6a8aeb6",
+       "verdict": "adopt-union",
+       "arms": {
+         "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
+@@ -1429,7 +1429,7 @@
+     },
+     {
+       "win_id": "vulkan-mul-mat-id-staging-receipt-hazard-assert",
+-      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "incoming": "e7f8fbf50893873ca1d64bcc7be4b19cb6a8aeb6",
+       "verdict": "adopt-union",
+       "arms": {
+         "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
+@@ -1449,7 +1449,7 @@
+     },
+     {
+       "win_id": "vulkan-uma-read-path-probe",
+-      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "incoming": "e7f8fbf50893873ca1d64bcc7be4b19cb6a8aeb6",
+       "verdict": "adopt-union",
+       "arms": {
+         "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
+@@ -1469,7 +1469,7 @@
+     },
+     {
+       "win_id": "vulkan-q5k-matvec-b-hoist-width-gate",
+-      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "incoming": "e7f8fbf50893873ca1d64bcc7be4b19cb6a8aeb6",
+       "verdict": "adopt-union",
+       "arms": {
+         "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
+@@ -1489,7 +1489,7 @@
+     },
+     {
+       "win_id": "vulkan-mmvq-a-hoist-r48b-route",
+-      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "incoming": "e7f8fbf50893873ca1d64bcc7be4b19cb6a8aeb6",
+       "verdict": "adopt-union",
+       "arms": {
+         "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
+@@ -1509,7 +1509,7 @@
+     },
+     {
+       "win_id": "vulkan-sx8-mulmm-packed-decode-and-mmq-under-coopmat",
+-      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "incoming": "e7f8fbf50893873ca1d64bcc7be4b19cb6a8aeb6",
+       "verdict": "adopt-union",
+       "arms": {
+         "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
+@@ -1529,7 +1529,7 @@
+     },
+     {
+       "win_id": "vulkan-mmv-admit-width-switch",
+-      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "incoming": "e7f8fbf50893873ca1d64bcc7be4b19cb6a8aeb6",
+       "verdict": "adopt-union",
+       "arms": {
+         "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
+@@ -1549,7 +1549,7 @@
+     },
+     {
+       "win_id": "vulkan-mmvq-wide-rows-switch",
+-      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "incoming": "e7f8fbf50893873ca1d64bcc7be4b19cb6a8aeb6",
+       "verdict": "adopt-union",
+       "arms": {
+         "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
+@@ -1569,7 +1569,7 @@
+     },
+     {
+       "win_id": "vulkan-q5k-mmvq-route-n5-8",
+-      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "incoming": "e7f8fbf50893873ca1d64bcc7be4b19cb6a8aeb6",
+       "verdict": "adopt-union",
+       "arms": {
+         "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
+@@ -1589,7 +1589,7 @@
+     },
+     {
+       "win_id": "vulkan-iq3-matvec-sign-hoist-n7-rows",
+-      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "incoming": "e7f8fbf50893873ca1d64bcc7be4b19cb6a8aeb6",
+       "verdict": "adopt-union",
+       "arms": {
+         "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
+@@ -1609,7 +1609,7 @@
+     },
+     {
+       "win_id": "vulkan-q6k-mmvq-route-n7-8",
+-      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "incoming": "e7f8fbf50893873ca1d64bcc7be4b19cb6a8aeb6",
+       "verdict": "adopt-union",
+       "arms": {
+         "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
+@@ -1629,7 +1629,7 @@
+     },
+     {
+       "win_id": "vulkan-q4k-mmvq-w5-column-split",
+-      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "incoming": "e7f8fbf50893873ca1d64bcc7be4b19cb6a8aeb6",
+       "verdict": "adopt-union",
+       "arms": {
+         "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
+@@ -1649,7 +1649,7 @@
+     },
+     {
+       "win_id": "vulkan-iq3s-matvec-n6-rows2",
+-      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "incoming": "e7f8fbf50893873ca1d64bcc7be4b19cb6a8aeb6",
+       "verdict": "adopt-union",
+       "arms": {
+         "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
+@@ -1669,7 +1669,7 @@
+     },
+     {
+       "win_id": "vulkan-iq4xs-q8_1-mmvq-admit-table",
+-      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "incoming": "e7f8fbf50893873ca1d64bcc7be4b19cb6a8aeb6",
+       "verdict": "adopt-union",
+       "arms": {
+         "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
+@@ -1689,7 +1689,7 @@
+     },
+     {
+       "win_id": "vulkan-cm1-width-rule-f16b-guard",
+-      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "incoming": "e7f8fbf50893873ca1d64bcc7be4b19cb6a8aeb6",
+       "verdict": "adopt-union",
+       "arms": {
+         "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
+@@ -1709,7 +1709,7 @@
+     },
+     {
+       "win_id": "vulkan-fa-sparse-prefill-qsa",
+-      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "incoming": "e7f8fbf50893873ca1d64bcc7be4b19cb6a8aeb6",
+       "verdict": "adopt-union",
+       "arms": {
+         "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
+@@ -1729,7 +1729,7 @@
+     },
+     {
+       "win_id": "vulkan-cm1-f16b-staging-mul-mat-id",
+-      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "incoming": "e7f8fbf50893873ca1d64bcc7be4b19cb6a8aeb6",
+       "verdict": "adopt-union",
+       "arms": {
+         "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
+@@ -1749,7 +1749,7 @@
+     },
+     {
+       "win_id": "vulkan-moe-gather-slot-major-matvec-id",
+-      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "incoming": "e7f8fbf50893873ca1d64bcc7be4b19cb6a8aeb6",
+       "verdict": "adopt-union",
+       "arms": {
+         "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
+@@ -1772,7 +1772,7 @@
+     },
+     {
+       "win_id": "vulkan-moe-gather-iq3s-rows2",
+-      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "incoming": "e7f8fbf50893873ca1d64bcc7be4b19cb6a8aeb6",
+       "verdict": "adopt-union",
+       "arms": {
+         "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
+@@ -1792,7 +1792,7 @@
+     },
+     {
+       "win_id": "vulkan-moe-gather-iq2s-body5",
+-      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "incoming": "e7f8fbf50893873ca1d64bcc7be4b19cb6a8aeb6",
+       "verdict": "adopt-union",
+       "arms": {
+         "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
+@@ -1812,7 +1812,7 @@
+     },
+     {
+       "win_id": "vulkan-qwen4exp-hc-post-w",
+-      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "incoming": "e7f8fbf50893873ca1d64bcc7be4b19cb6a8aeb6",
+       "verdict": "adopt-union",
+       "arms": {
+         "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
+@@ -1832,7 +1832,7 @@
+     },
+     {
+       "win_id": "vulkan-qwen4exp-gdn-bank",
+-      "incoming": "f95422f3975dc9a6c37ae5955dcc5f9926bd336c",
++      "incoming": "e7f8fbf50893873ca1d64bcc7be4b19cb6a8aeb6",
+       "verdict": "adopt-union",
+       "arms": {
+         "upstream": "inapplicable: the incoming range 7156c61607..f95422f397 is fork-internal lane-302 work (levers 9 and 10), not an upstream ingest",
+@@ -1849,6 +1849,24 @@
+       ],
+       "decided_utc": "2026-10-08T20:45:00Z",
+       "decided_by": "lane-302 lead (Opus 5.5), write granted by HQ84 2026-10-08 15:0x (Q-302-r48a, lane branch only)"
++    },
++    {
++      "win_id": "vulkan-qsa-mask-fa-fusion",
++      "incoming": "e7f8fbf50893873ca1d64bcc7be4b19cb6a8aeb6",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range is fork-internal lane-302 work (levers 10-11 + manifest rows), not an upstream ingest",
++        "ours": "v0.1.3.1 point ed590650bd carries lane 301 lever 4 (21dcfd83ca) QSA mask FA fusion",
++        "union": "range adds only default-OFF env-gated code and a banner field; no line of the QSA mask fusion changes"
++      },
++      "quality": "lane 302 cell U (TBO 56/56, plant RED 41 FAIL, harness 32/32 IDENT) + cell Y/Z OFF-path proofs",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellU-10071120/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/prefix-diff-vulkan-cpp-r49.txt",
++        "commit:21dcfd83cae7114475d065e0cfbd02af341aca45"
++      ],
++      "decided_utc": "2026-10-09T10:00:00Z",
++      "decided_by": "HQ85 2026-10-09 (drafted by lane 298 Q69)"
+     }
+   ]
+ }

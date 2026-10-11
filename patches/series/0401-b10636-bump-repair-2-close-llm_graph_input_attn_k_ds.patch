@@ -1,0 +1,26 @@
+From 3bff1d7d5555be57c58384ddf54a33cabd5746de Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 29 Aug 2026 01:03:33 -0400
+Subject: [PATCH] b10636 bump repair 2: close
+ llm_graph_input_attn_k_dsa_iswa::can_reuse - the union resolution at
+ ef642481d kept both sides' bodies but only one shared 'return res; }' tail,
+ nesting every following definition inside it (build FAILED, 18 errors)
+
+---
+ src/llama-graph.cpp | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
+index a9e6bb021b..adb5c9fda7 100644
+--- a/src/llama-graph.cpp
++++ b/src/llama-graph.cpp
+@@ -653,6 +653,9 @@ bool llm_graph_input_attn_k_dsa_iswa::can_reuse(const llm_graph_params & params)
+     res &= inp_dsa->can_reuse_impl(params);
+     res &= inp_swa->can_reuse_impl(params);
+ 
++    return res;
++}
++
+ // dsv4 helpers
+ 
+ void llm_graph_input_attn_k_iswa::set_input(const llama_ubatch * ubatch) {

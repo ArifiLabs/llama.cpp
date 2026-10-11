@@ -1,0 +1,131 @@
+From 746e6e5f7eb83965ed2ee3a0ad52de9fda0f986b Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 25 Aug 2026 00:55:42 -0400
+Subject: [PATCH] vulkan: F-136 residual ROOT FIX in graph_optimize is_src_of -
+ full view-chain roots + RAW/WAR hazards through node sources; reorder no
+ longer hoists reads over aliased inplace writes (repeat repro: belt-off now
+ 3/3 byte-identical)
+
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 31 +++++++++++++++++++++++---
+ src/llama-context.cpp                | 33 ++++++++++++++++++++++++++++
+ src/llama-graph.cpp                  | 11 ++++++++++
+ 3 files changed, 72 insertions(+), 3 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 0fc7162a70..5ba362b23c 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -15301,7 +15301,14 @@ void ggml_vk_graph_optimize(ggml_backend_t backend, struct ggml_cgraph * graph,
+         return node->op == GGML_OP_NONE || node->op == GGML_OP_RESHAPE || node->op == GGML_OP_TRANSPOSE || node->op == GGML_OP_VIEW || node->op == GGML_OP_PERMUTE;
+     };
+ 
+-    auto const &is_src_of = [&is_empty](const ggml_tensor *dst, const ggml_tensor *src) -> bool {
++    auto const &view_root = [](const ggml_tensor *t) -> const ggml_tensor * {
++        while (t->view_src) {
++            t = t->view_src;
++        }
++        return t;
++    };
++
++    auto const &is_src_of = [&is_empty, &view_root](const ggml_tensor *dst, const ggml_tensor *src) -> bool {
+         auto const &base = [](const ggml_tensor * tensor) {
+             return tensor->view_src ? tensor->view_src : tensor;
+         };
+@@ -15321,10 +15328,28 @@ void ggml_vk_graph_optimize(ggml_backend_t backend, struct ggml_cgraph * graph,
+                 return true;
+             }
+         }
+-        // implicit dependency if they view the same tensor
+-        if (base(dst) == base(src)) {
++        // implicit dependency if they view the same tensor (full view chain, not one level -
++        // an inplace op on a view-of-a-view aliases the root tensor)
++        const ggml_tensor *dst2 = view_root(dst);
++        const ggml_tensor *src2 = view_root(src);
++        if (dst2 == src2) {
+             return true;
+         }
++        // aliasing through SOURCES (ring-repair 2026-08-25, F-136 residual root):
++        // RAW: dst READS memory that src writes (dst's src views the tensor src aliases).
++        //   e.g. src = SCALE-inplace zeroing a cache row, dst = GET_ROWS whose input is a
++        //   reshape of that cache - reordering the read before the zero resurrects stale
++        //   cross-request recurrent state. Measured: repeat repro diverges/echoes with
++        //   graph_optimize on, byte-identical with it off.
++        // WAR: dst WRITES memory that one of src's sources reads.
++        for (uint32_t s = 0; s < GGML_MAX_SRC; ++s) {
++            if (dst->src[s] && view_root(dst->src[s]) == src2) {
++                return true;
++            }
++            if (src->src[s] && view_root(src->src[s]) == dst2) {
++                return true;
++            }
++        }
+         return false;
+     };
+ 
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index 7edb38d09a..7784271d08 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -2512,6 +2512,39 @@ int llama_context::decode(const llama_batch_ext & batch_inp) {
+                 LLAMA_LOG_INFO("rs-trace PDH n_tokens=%d plane0=%016llx\n",
+                         (int) n_tokens_all, (unsigned long long) mr->debug_hash_row(0, 0));
+             }
++            // ring-repair 2026-08-25 ZERO AUDIT: for every SCALE node aliasing a recurrent cache
++            // tensor, check the executed node's data pointer against the cache base. A mismatch =
++            // the allocator rehomed the "inplace" zero into compute memory - the write never
++            // touched the cache, which is exactly the observed no-op.
++            static const bool rs_za = getenv("LLAMA_RS_ZERO_AUDIT") != nullptr;
++            if (rs_za && mr) {
++                ggml_cgraph * gf = gf_res_prev->get_gf();
++                for (int i = 0; i < ggml_graph_n_nodes(gf); ++i) {
++                    ggml_tensor * n = ggml_graph_node(gf, i);
++                    if (strncmp(n->name, "rs_zero_tap_", 12) == 0) {
++                        std::vector<uint8_t> tb(ggml_nbytes(n));
++                        ggml_backend_tensor_get(n, tb.data(), 0, tb.size());
++                        uint64_t h = 1469598103934665603ull;
++                        bool all_zero = true;
++                        for (uint8_t b : tb) { h = (h ^ b) * 1099511628211ull; all_zero &= (b == 0); }
++                        LLAMA_LOG_INFO("rs-trace ZERO-TAP %s all_zero=%d hash=%016llx\n",
++                                n->name, (int) all_zero, (unsigned long long) h);
++                        continue;
++                    }
++                    if (n->op != GGML_OP_SCALE) { continue; }
++                    const ggml_tensor * base = n;
++                    while (base->view_src) { base = base->view_src; }
++                    for (const auto & lay : { mr->r_l, mr->s_l }) {
++                        for (ggml_tensor * ct : lay) {
++                            if (!ct || base != ct) { continue; }
++                            LLAMA_LOG_INFO("rs-trace ZERO-AUDIT node=%s cache=%s node_data=%p cache_data=%p same_buf=%d src_data=%p\n",
++                                    n->name, ct->name, n->data, ct->data,
++                                    (int) (n->buffer == ct->buffer),
++                                    n->src[0] ? n->src[0]->data : nullptr);
++                        }
++                    }
++                }
++            }
+         }
+     }
+ 
+diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
+index 393a7572bb..a9e6bb021b 100644
+--- a/src/llama-graph.cpp
++++ b/src/llama-graph.cpp
+@@ -3749,6 +3749,17 @@ ggml_tensor * llm_graph_context::build_rs(
+     ggml_tensor * state_zero = ggml_view_1d(ctx0, states, state_size*(rs_zero >= 0), rs_zero*states->nb[1]*(rs_zero >= 0));
+     ggml_build_forward_expand(gf, ggml_scale_inplace(ctx0, state_zero, 0));
+ 
++    // ring-repair 2026-08-25 ZERO TAP: env-gated copy of the just-zeroed row into a fresh output
++    // tensor, expanded right after the scale. Read host-side post-decode: nonzero tap = the scale
++    // never executed; zero tap + stale gather = the gather ran first or read other memory.
++    static const bool rs_zero_tap = getenv("LLAMA_RS_ZERO_TAP") != nullptr;
++    if (rs_zero_tap && rs_zero >= 0) {
++        ggml_tensor * tap = ggml_cont(ctx0, ggml_view_1d(ctx0, states, state_size, rs_zero*states->nb[1]));
++        ggml_set_output(tap);
++        ggml_format_name(tap, "rs_zero_tap_%s", s->name);
++        ggml_build_forward_expand(gf, tap);
++    }
++
+     // copy states
+     // NOTE: assuming the copy destinations are ALL contained between rs_head and rs_head + n_rs
+     // {state_size, rs_size} -> {state_size, n_seqs}

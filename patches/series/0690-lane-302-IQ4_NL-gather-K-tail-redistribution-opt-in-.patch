@@ -1,0 +1,194 @@
+From 1ed8bafa0b4097c8375420d292eeb96c5cb8d691 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 01:27:43 -0400
+Subject: [PATCH] lane-302: IQ4_NL gather K-tail redistribution, opt-in
+ GGML_ARIFI_MOE_GATHER_TAIL=1 (=2 planted wrong arm)
+
+IQ4_NL down has K=640; on a 64-lane subgroup with 8 values per lane the last K iteration ran 16 of 64 lanes.
+Each lane now computes one owner's tail chunk for one row (16 chunks x 4 rows = 64) and the owner pulls it by
+subgroupShuffle, then applies the same *= d; temp += in the same order. Per-lane partials and the subgroupAdd tree
+are unchanged, so rows are byte-identical by construction (cell I harness is the judge). Only the generic
+mul_mat_vec.comp idg variant with USE_SUBGROUP_ADD_NO_SHMEM gets the path; spec constant 3 (default 0 = old loop).
+
+Lane: lane-302
+(cherry picked from commit 323e3a4fc7971a9dc5aa56a485820f5c52f1f337)
+
+Origin: ArifiLabs (native) - fork-authored (lane-302); no upstream origin exists.
+Measured-effect: UNMEASURED - no served number for this commit in the release ledger or the commit message
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          | 16 +++-
+ .../vulkan-shaders/mul_mat_vec.comp           | 88 +++++++++++++++++++
+ 2 files changed, 101 insertions(+), 3 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index be0356660c..149f0d128e 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -616,6 +616,13 @@ static bool ggml_vk_roll_bk_loop(const uint32_t * code, size_t word_count, std::
+     return true;
+ }
+ 
++// lane-302 Route A lever 2: IQ4_NL gather K-tail redistribution, opt-in (GGML_ARIFI_MOE_GATHER_TAIL=1) until measured;
++// =2 is the planted wrong arm for the op gate (test only)
++static uint32_t moe_gather_tail_env() {
++    const char * e = getenv("GGML_ARIFI_MOE_GATHER_TAIL");
++    return (e != nullptr && (e[0] == '1' || e[0] == '2')) ? (uint32_t) (e[0] - '0') : 0u;
++}
++
+ static void ggml_vk_create_pipeline_func(vk_device& device, vk_pipeline& pipeline, size_t spv_size, const void* spv_data, const std::string entrypoint,
+                                          uint32_t parameter_count, std::array<uint32_t, 3> wg_denoms, std::vector<uint32_t> specialization_constants,
+                                          bool disable_robustness, bool require_full_subgroups, uint32_t required_subgroup_size) {
+@@ -3946,8 +3953,9 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+             device->moe_gather_rows = (r == 1 || r == 2 || r == 4 || r == 8) ? r : rm_iq;
+             if (w == 0 && device->moe_gather_cols != 0) {
+                 // fprintf, not GGML_LOG_INFO: the server log callback drops ggml-vulkan INFO lines (lane-302 cell E)
+-                fprintf(stderr, "ggml_vulkan: MUL_MAT_ID expert gather ON, width %u, rows %u, iq3_s rows %u%s\n", device->moe_gather_cols,
+-                        device->moe_gather_rows, renv == nullptr ? 2u : device->moe_gather_rows, device->moe_gather_plant ? " (PLANT: wrong token count, test only)" : "");
++                fprintf(stderr, "ggml_vulkan: MUL_MAT_ID expert gather ON, width %u, rows %u, iq3_s rows %u, iq4_nl tail %u%s\n", device->moe_gather_cols,
++                        device->moe_gather_rows, renv == nullptr ? 2u : device->moe_gather_rows, moe_gather_tail_env(),
++                        device->moe_gather_plant ? " (PLANT: wrong token count, test only)" : "");
+             }
+         }
+         if (device->moe_gather_cols != 0) {
+@@ -3955,11 +3963,13 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+             const uint32_t gr = device->moe_gather_rows;
+             // IQ3_S default rows 2 (lane-302 cellG-10052319: n4 -10%/-13% vs rm_iq both rounds, 80/80 IDENT); env overrides
+             const uint32_t gr_iq3s = getenv("GGML_ARIFI_MOE_GATHER_ROWS") == nullptr ? 2u : gr;
++            // lane-302 Route A lever 2: IQ4_NL K-tail redistribution (spec 3 of the generic idg shader); unset = old tail loop
++            const uint32_t moe_gather_tail = moe_gather_tail_env();
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ2_S],  "mul_mat_vec_idg_iq2_s_f32",   arr_dmmv_idg_iq2_s_f32_f32_len[reduc16],   arr_dmmv_idg_iq2_s_f32_f32_data[reduc16],   "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr, 1, 1}, {wg_size_subgroup16, gr, gc}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ3_XXS], "mul_mat_vec_idg_iq3_xxs_f32", arr_dmmv_idg_iq3_xxs_f32_f32_len[reduc16], arr_dmmv_idg_iq3_xxs_f32_f32_data[reduc16], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr, 1, 1}, {wg_size_subgroup16, gr, gc, iq3_sign_hoist}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ3_S],   "mul_mat_vec_idg_iq3_s_f32",   arr_dmmv_idg_iq3_s_f32_f32_len[reduc16],   arr_dmmv_idg_iq3_s_f32_f32_data[reduc16],   "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr_iq3s, 1, 1}, {wg_size_subgroup16, gr_iq3s, gc, iq3_sign_hoist}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ4_XS],  "mul_mat_vec_idg_iq4_xs_f32",  arr_dmmv_idg_iq4_xs_f32_f32_len[reduc16],  arr_dmmv_idg_iq4_xs_f32_f32_data[reduc16],  "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr, 1, 1}, {wg_size_subgroup16, gr, gc}, 1, true, use_subgroups16, force_subgroup_size16);
+-            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ4_NL],  "mul_mat_vec_idg_iq4_nl_f32",  arr_dmmv_idg_iq4_nl_f32_f32_len[reduc16],  arr_dmmv_idg_iq4_nl_f32_f32_data[reduc16],  "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr, 1, 1}, {wg_size_subgroup16, gr, gc}, 1, true, use_subgroups16, force_subgroup_size16);
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ4_NL],  "mul_mat_vec_idg_iq4_nl_f32",  arr_dmmv_idg_iq4_nl_f32_f32_len[reduc16],  arr_dmmv_idg_iq4_nl_f32_f32_data[reduc16],  "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr, 1, 1}, {wg_size_subgroup16, gr, gc, moe_gather_tail}, 1, true, use_subgroups16, force_subgroup_size16);
+         }
+ 
+         // TurboQuant weight types. Same 32-thread pin and SHMEM reduction as the
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec.comp
+index c6a498916d..6dbb03aa71 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec.comp
+@@ -2,6 +2,11 @@
+ 
+ #extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+ 
++#if defined(MUL_MAT_ID_GATHER) && defined(USE_SUBGROUP_ADD_NO_SHMEM) && !defined(DATA_A_F32) && !defined(DATA_A_F16) && !defined(DATA_A_BF16)
++#extension GL_KHR_shader_subgroup_shuffle : require
++#define ARIFI_GATHER_TAIL 1
++#endif
++
+ #include "mul_mat_vec_base.glsl"
+ #include "dequant_funcs.glsl"
+ 
+@@ -13,6 +18,14 @@ layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
+ #define K_PER_ITER 4
+ #endif
+ 
++#ifdef ARIFI_GATHER_TAIL
++// arifi lane-302 Route A: K-tail redistribution (IQ4_NL down, K = 640 on a 64-lane subgroup: the last K iteration
++// ran 16 of 64 lanes). Lane h computes owner (h % tl)'s tail chunk of row (h / tl) with the same statements as
++// iter(), then the owner pulls it by subgroupShuffle and applies the same `*= dm.x; temp +=` in the same order.
++// Per-lane partials and the subgroupAdd tree are unchanged, so each row is byte-identical to the old path.
++layout (constant_id = 3) const uint GATHER_TAIL = 0;
++#endif
++
+ 
+ uint a_offset, b_offset, d_offset, y_offset;
+ 
+@@ -133,6 +146,69 @@ void iter(inout FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const uint first_row, const
+ #endif
+ }
+ 
++#ifdef ARIFI_GATHER_TAIL
++void tail_iter(inout FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const uint first_row, const uint num_rows, const uint tid, const uint i, const uint tl)
++{
++    // helper side: lane tid computes the tail chunk of owner ht for row hn (statements copied from iter())
++    const uint hn = tid / tl;
++    const uint ht = tid - hn * tl;
++    FLOAT_TYPE pre[NUM_COLS];
++    [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
++        pre[j] = FLOAT_TYPE(0);
++    }
++    if (hn < num_rows) {
++        const uint col = i*BLOCK_SIZE + K_PER_ITER*ht;
++        const uint iqs = (col%QUANT_K)/QUANT_R;
++        const uint iybs = col - col%QUANT_K;
++        const uint ib = ((first_row + hn)*p.ncols + col)/QUANT_K;
++
++        vec4 v = dequantize4(ib, iqs, a_offset);
++        vec4 v2 = dequantize4(ib, iqs+(4/QUANT_R), a_offset);
++
++        const vec2 dm = get_dm(ib, a_offset);
++        if (dm.y != 0) {
++            v = v * dm.x + dm.y;
++            v2 = v2 * dm.x + dm.y;
++        }
++
++        [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
++#if QUANT_R == 2
++            const vec4 bv02 = vec4(data_b_v4[(B_COL(j) + b_offset + iybs + iqs) / 4]);
++            const vec4 bv13 = vec4(data_b_v4[(B_COL(j) + b_offset + iybs + iqs + y_offset) / 4]);
++            const vec4 bv0 = vec4(bv02.x, bv13.x, bv02.y, bv13.y);
++            const vec4 bv1 = vec4(bv02.z, bv13.z, bv02.w, bv13.w);
++#else
++            const vec4 bv0 = vec4(data_b_v4[(B_COL(j) + b_offset + iybs + iqs) / 4]);
++            const vec4 bv1 = vec4(data_b_v4[(B_COL(j) + b_offset + iybs + iqs) / 4 + 1]);
++#endif
++            FLOAT_TYPE rowtmp = dot(bv0, v);
++            rowtmp += dot(bv1, v2);
++            pre[j] = rowtmp;
++        }
++    }
++
++    // owner side: lanes < tl own a tail chunk; every lane joins the shuffle (uniform control flow)
++    const bool owner = tid < tl;
++    const uint col = i*BLOCK_SIZE + K_PER_ITER*(owner ? tid : 0);
++    uint ibi = first_row*p.ncols;
++    [[unroll]] for (uint n = 0; n < num_rows; ++n) {
++        const uint ib = (ibi + col)/QUANT_K;
++        ibi += p.ncols;
++        const vec2 dm = get_dm(ib, a_offset);
++        [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
++            // GATHER_TAIL == 2 is the planted wrong arm (pulls the neighbour lane's chunk; op gate must go RED)
++            FLOAT_TYPE rowtmp = subgroupShuffle(pre[j], n*tl + (owner ? tid : 0) + (GATHER_TAIL == 2 ? 1 : 0));
++            if (owner) {
++                if (dm.y == 0)
++                    rowtmp *= dm.x;
++
++                temp[j][n] += rowtmp;
++            }
++        }
++    }
++}
++#endif
++
+ #if defined(DATA_A_F32) || defined(DATA_A_F16) || defined(DATA_A_BF16)
+ void iter_aligned_nonquant(inout FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const uint first_row, const uint num_rows, const uint tid, const uint i)
+ {
+@@ -177,6 +253,12 @@ void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
+     }
+ 
+     uint num_iters = p.ncols / (K_PER_ITER * BLOCK_SIZE);
++#ifdef ARIFI_GATHER_TAIL
++    const uint tail_lanes = (p.ncols - num_iters * K_PER_ITER * BLOCK_SIZE) / K_PER_ITER;
++    const bool use_tail = GATHER_TAIL != 0 && tail_lanes != 0 && (p.ncols % K_PER_ITER) == 0 &&
++                          tail_lanes * num_rows <= BLOCK_SIZE && gl_SubgroupSize == BLOCK_SIZE;
++    if (!use_tail)
++#endif
+     if (num_iters * K_PER_ITER * BLOCK_SIZE + K_PER_ITER*tid < p.ncols) {
+         num_iters++;
+     }
+@@ -261,6 +343,12 @@ void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
+     }
+ #endif
+ 
++#ifdef ARIFI_GATHER_TAIL
++    if (use_tail) {
++        tail_iter(temp, first_row, num_rows, tid, num_iters*K_PER_ITER, tail_lanes);
++    }
++#endif
++
+     reduce_result(temp, d_offset, first_row, num_rows, tid);
+ }
+ 

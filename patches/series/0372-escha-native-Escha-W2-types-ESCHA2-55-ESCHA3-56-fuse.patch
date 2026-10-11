@@ -1,0 +1,1158 @@
+From 56eaabfc4dd6ad889c01eda22cd033113f9aca31 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 20 Aug 2026 16:46:52 -0400
+Subject: [PATCH] escha: native Escha-W2 types (ESCHA2=55/ESCHA3=56) + fused
+ GGML_OP_ESCHA_MM, CPU + Vulkan
+
+Packed EschaLabs cbA code tiles as first-class serialized weight types, payload
+byte-identical to the vendor checkpoint ([in/16][out/16][16K] i16 LE). One fused
+op does rin-scale -> H128 -> decode-matmul -> H128 -> rout-scale -> +bias; f32
+aux sidecar <base>.escha_aux loaded by a generic pass, wired arch-agnostically
+through build_lora_mm (params.mdl). Decode math = the Terra-64 PTX-recovered cbA
+generator (LUT on CPU, software-f16-RTE inline on Vulkan; no float-controls
+dependency). Types are NOT row-separable: generic MUL_MAT and the loader
+buffer-type probe reject/route accordingly. Proofs: python-golden CPU test
+(nmse ~1e-13, planted-positive), test-backend-ops ESCHA_MM 54/54 Vulkan-vs-CPU
+incl. real 27B shapes, structural planted-RED + revert-GREEN receipts in
+lane-evidence/2026-08-20-lane-164-escha-native/.
+
+Origin: ArifiLabs (native)
+Conflict-resolved: auto: case-label union (upstream labels kept beside ours) in ggml/src/ggml-vulkan/ggml-vulkan.cpp
+Conflict-resolved: S4 split (f172be756): auto_split - our hunks re-homed into ggml-vulkan-push-constants.h,ggml-vulkan-types.h; wrap/same-point regions merged in place (fixS4_426.py)
+Conflict-resolved: auto: same-point-insertion(upstream block then ours) in ggml/src/ggml-cpu/ggml-cpu.cpp
+---
+ docs/TYPE-ID-ALLOCATION.md                    |   2 +
+ ggml/include/ggml.h                           |  27 +++
+ ggml/src/ggml-cpu/ggml-cpu.c                  |  17 ++
+ ggml/src/ggml-cpu/ggml-cpu.cpp                |   7 +
+ ggml/src/ggml-cpu/ops.cpp                     | 205 ++++++++++++++++++
+ ggml/src/ggml-cpu/ops.h                       |   3 +
+ .../ggml-vulkan/ggml-vulkan-push-constants.h  |   8 +
+ ggml/src/ggml-vulkan/ggml-vulkan-types.h      |   1 +
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          |  58 +++++
+ .../ggml-vulkan/vulkan-shaders/escha_mm.comp  | 174 +++++++++++++++
+ .../vulkan-shaders/vulkan-shaders-gen.cpp     |   4 +
+ ggml/src/ggml.c                               |  50 ++++-
+ gguf-py/gguf/constants.py                     |   5 +
+ src/llama-context.cpp                         |   1 +
+ src/llama-graph.cpp                           |  11 +
+ src/llama-graph.h                             |   5 +
+ src/llama-model-loader.cpp                    |   7 +
+ src/llama-model.cpp                           |  21 ++
+ src/llama-model.h                             |   9 +
+ tests/CMakeLists.txt                          |   3 +
+ tests/test-backend-ops.cpp                    |  55 +++++
+ tests/test-escha-mm.cpp                       |  97 +++++++++
+ 22 files changed, 768 insertions(+), 2 deletions(-)
+ create mode 100644 ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp
+ create mode 100644 tests/test-escha-mm.cpp
+
+diff --git a/docs/TYPE-ID-ALLOCATION.md b/docs/TYPE-ID-ALLOCATION.md
+index 5a2c89f426..bcdd64ec1a 100644
+--- a/docs/TYPE-ID-ALLOCATION.md
++++ b/docs/TYPE-ID-ALLOCATION.md
+@@ -137,6 +137,8 @@ are **not ours to choose**: we adopt whatever the format's originator serialized
+ | 52 | `GGML_TYPE_TQ3_4SV` | tq3 (**retagged**, their 37) | NOT DERIVED | NOT DERIVED | 32 | **RESERVED — not implemented** (lane-151) — see §3.1.2 |
+ | 53 | `GGML_TYPE_TQ3_1S_AP1` | tq3 (**retagged**, their 31) | NOT DERIVED | NOT DERIVED | 32 | **RESERVED — not implemented** (lane-151) — see §3.1.2 |
+ | 54 | `GGML_TYPE_TQ3_1S_TQ3` | tq3 (**retagged**, their 44) | *hypothesis:* same wire as our 45 | *hypothesis:* 16 | 32 | **RESERVED — not implemented** (lane-151) — see §3.1.2 |
++| 55 | `GGML_TYPE_ESCHA2` | **ArifiLabs** (lane-164) | packed EschaLabs cbA K=2 code tiles, `[in/16][out/16][32] i16 LE` | 64 | 256 (one 16x16 tile) | **implemented** — NOT row-separable; sole consumer `GGML_OP_ESCHA_MM`; f32 aux sidecar `<base>.escha_aux` required |
++| 56 | `GGML_TYPE_ESCHA3` | **ArifiLabs** (lane-164) | packed EschaLabs cbA K=3 code tiles, `[in/16][out/16][48] i16 LE` | 96 | 256 | **implemented** — same rules as 55 |
+ 
+ `44` is left as a hole. It is the value TurboQuant uses for a runtime-only type and the value our
+ current `GGML_TYPE_COUNT` occupies; leaving it unassigned costs nothing and removes a whole class of
+diff --git a/ggml/include/ggml.h b/ggml/include/ggml.h
+index d1503aca10..87f7c22001 100644
+--- a/ggml/include/ggml.h
++++ b/ggml/include/ggml.h
+@@ -464,6 +464,16 @@ extern "C" {
+         // doc. A missing CPU switch case compiles clean and aborts at RUNTIME.
+         // ---------------------------------------------------------------------
+ 
++        // Block W, 55..56 - ArifiLabs-minted Escha-W2 serialized weight formats
++        // (lane-164; TYPE-ID-ALLOCATION §3.1). Packed EschaLabs cbA code tiles,
++        // byte-identical to the vendor checkpoint layout: [in/16][out/16][16K]
++        // int16 LE, one 16x16 weight tile per 16K codewords. NOT row-separable
++        // (one codeword feeds 4 rows x 2 cols of its tile): the ONLY consumer is
++        // GGML_OP_ESCHA_MM; generic row-wise paths must reject these types.
++        // 52..54 stay reserved for tq3 (§3.1.2).
++        GGML_TYPE_ESCHA2 = 55, // Escha cbA K=2: 64 B / 256-weight tile, 2 bpw
++        GGML_TYPE_ESCHA3 = 56, // Escha cbA K=3: 96 B / 256-weight tile, 3 bpw
++
+         // Block W, 100..107 - ROCmFPX weight formats, adopted VERBATIM from
+         // charlie12345/ROCmFPX so its GGUFs and its convert/quantize tooling
+         // interoperate byte-for-byte. The implementations are compiled only when
+@@ -691,6 +701,10 @@ extern "C" {
+         GGML_OP_MOE_PIPELINE_FORWARD,
+         GGML_OP_PRINT_TENSOR,
+ 
++        // -- ArifiLabs Escha-W2 (lane-164) tag:enum
++        // fused escha linear: y = D(rout)*H128( H128(D(rin)*x)^T W_bare ) + bias
++        GGML_OP_ESCHA_MM,
++
+         GGML_OP_COUNT,
+     };
+ 
+@@ -1574,6 +1588,19 @@ extern "C" {
+             struct ggml_tensor  * a,
+             struct ggml_tensor  * b);
+ 
++    // ArifiLabs Escha-W2 fused linear (lane-164).
++    // a:   packed escha codes, type GGML_TYPE_ESCHA2/ESCHA3, ne = [n_in, n_out]
++    // b:   activations, F32, ne = [n_in, n_cols, ...]
++    // aux: F32 sidecar, ne = [n_in + 2*n_out]: rin*s_in | rout*s_out | bias
++    // result F32 [n_out, n_cols, ...]:
++    //   y = D(rout) * H128( decode(a)^T * H128(D(rin) * b) ) + bias
++    // where H128 is the normalized 128-wide blockwise Hadamard transform.
++    GGML_API struct ggml_tensor * ggml_escha_mm(
++            struct ggml_context * ctx,
++            struct ggml_tensor  * a,
++            struct ggml_tensor  * b,
++            struct ggml_tensor  * aux);
++
+     // change the precision of a matrix multiplication
+     // set to GGML_PREC_F32 for higher precision (useful for phi-2)
+     GGML_DEPRECATED(GGML_API void ggml_mul_mat_set_prec(
+diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
+index 22f0d00c55..a18828ad4f 100644
+--- a/ggml/src/ggml-cpu/ggml-cpu.c
++++ b/ggml/src/ggml-cpu/ggml-cpu.c
+@@ -2835,6 +2835,12 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
+             } break;
+       // -- Powerinfer end
+ 
++        // -- ArifiLabs Escha-W2 (lane-164)
++        case GGML_OP_ESCHA_MM:
++            {
++                ggml_compute_forward_escha_mm(params, tensor);
++            } break;
++
+ 
+         case GGML_OP_RESHAPE:
+             {
+@@ -3207,6 +3213,12 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
+         } break;
+         // -- PowerInfer end
+ 
++        // -- ArifiLabs Escha-W2 (lane-164)
++        case GGML_OP_ESCHA_MM:
++        {
++            n_tasks = n_threads;
++        } break;
++
+         default:
+             {
+                 fprintf(stderr, "%s: op not implemented: ", __func__);
+@@ -3599,6 +3611,11 @@ struct ggml_cplan ggml_graph_plan(
+                             cur = GGML_PAD(cur, 64) + n_tasks * ggml_cpu_iqp_scratch_size(node);
+                         }
+                     } break;
++                case GGML_OP_ESCHA_MM:
++                    {
++                        // per-thread transformed-activation buffer (lane-164)
++                        cur = sizeof(float) * node->src[0]->ne[0] * n_threads;
++                    } break;
+                 case GGML_OP_MUL_MAT_ID:
+                     {
+                         cur = 0;
+diff --git a/ggml/src/ggml-cpu/ggml-cpu.cpp b/ggml/src/ggml-cpu/ggml-cpu.cpp
+index 1df0f2bb92..2e9284e1e8 100644
+--- a/ggml/src/ggml-cpu/ggml-cpu.cpp
++++ b/ggml/src/ggml-cpu/ggml-cpu.cpp
+@@ -455,7 +455,14 @@ static bool ggml_backend_cpu_device_supports_op(ggml_backend_dev_t dev, const st
+                 src0->type == GGML_TYPE_F32 && op->type == GGML_TYPE_F32) {
+                 return src1->type == GGML_TYPE_F32 || src1->type == GGML_TYPE_F16;
+             }
++            // escha types are not row-separable; their only consumer is GGML_OP_ESCHA_MM (lane-164)
++            if (src0->type == GGML_TYPE_ESCHA2 || src0->type == GGML_TYPE_ESCHA3) {
++                return false;
++            }
+             return src1->type == GGML_TYPE_F32 || src1->type == ggml_get_type_traits_cpu(src0->type)->vec_dot_type;
++        case GGML_OP_ESCHA_MM:
++            return (src0->type == GGML_TYPE_ESCHA2 || src0->type == GGML_TYPE_ESCHA3) &&
++                   src1->type == GGML_TYPE_F32 && op->src[2]->type == GGML_TYPE_F32;
+         case GGML_OP_SOFT_MAX_BACK: {
+             if (op->src[0]->type != GGML_TYPE_F32 || op->src[1]->type != GGML_TYPE_F32) {
+                 return false;
+diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
+index 4bf10779c7..37aaf8da98 100644
+--- a/ggml/src/ggml-cpu/ops.cpp
++++ b/ggml/src/ggml-cpu/ops.cpp
+@@ -12773,3 +12773,208 @@ void powerinfer_compute_forward_print_tensor(const struct ggml_compute_params *p
+         }
+     }
+ }
++
++#include <mutex>
++#include <cstring>
++
++// ================================================================================================
++// ArifiLabs Escha-W2 fused linear (lane-164)
++//
++// y = D(rout*s_out) * H128( W_bare^T * H128(D(rin*s_in) * x) ) + bias
++//
++// src0: packed cbA code tiles, GGML_TYPE_ESCHA2/ESCHA3, ne = [n_in, n_out], tile-major
++//       [n_in/16][n_out/16][16*K] int16 LE - byte-identical to the vendor checkpoint.
++// src1: F32 activations [n_in, ncols...]
++// src2: F32 aux [n_in + 2*n_out] = rin_c | rout_c | bias
++//
++// Decode math: the recovered cbA generator (Terra-64, trial-evidence/escha-decoder), realized
++// as a 65,536-entry f32 LUT built from the exact f16 arithmetic at first use. Bit-exact vs
++// tools/decode_cba.py by construction (f16(x)+f16(y) done in f32 then rounded RTE == f16 RN add).
++// ================================================================================================
++
++static float escha_cba_lut[65536];
++static std::once_flag escha_lut_once;
++
++static void escha_build_lut(void) {
++    for (uint32_t x = 0; x < 65536; ++x) {
++        const uint32_t mixed = (uint32_t)(x * 0xCBAC1FEDu);
++        const uint32_t q     = 0x3B603B60u ^ (mixed & 0x8FFF8FFFu);
++        const float lo = GGML_FP16_TO_FP32((ggml_fp16_t)(q & 0xFFFF));
++        const float hi = GGML_FP16_TO_FP32((ggml_fp16_t)(q >> 16));
++        escha_cba_lut[x] = GGML_FP16_TO_FP32(GGML_FP32_TO_FP16(lo + hi));
++    }
++}
++
++// K=3 crossed-bitstream lane parameters (PTX lines 2282-2312, Terra-64)
++struct escha_k3_lane { int lo_idx, hi_idx, shift; };
++static escha_k3_lane escha_k3_lanes[32];
++static std::once_flag escha_k3_once;
++
++static void escha_build_k3_lanes(void) {
++    for (int lane = 0; lane < 32; ++lane) {
++        const int t = 24 * lane;
++        const int a = t + 755;
++        const int b = t + 791;
++        const int d = (b & 2016) - t;
++        escha_k3_lanes[lane].shift  = d - 760;
++        escha_k3_lanes[lane].hi_idx = (lane == 0) ? 23 : (a >> 5) - 24;
++        escha_k3_lanes[lane].lo_idx = (((b >> 3) & 252) - 96) / 4;
++    }
++}
++
++// decode one 16x16 tile into wtile[row=in][col=out]
++static inline void escha_decode_tile_k2(const uint16_t * w, float wtile[16][16]) {
++    for (int lane = 0; lane < 32; ++lane) {
++        const uint32_t word = w[lane ^ 1];
++        const int colbase = 2*(lane >> 3) + ((lane >> 2) & 1);
++        const int rowbase = 2*(lane & 3);
++        for (int c = 0; c < 8; ++c) {
++            const int row = rowbase + (c & 1) + 8*(1 - ((c >> 1) & 1));
++            const int col = (c < 4 ? 8 : 0) + colbase;
++            wtile[row][col] = escha_cba_lut[(word >> (2*c)) & 0xFFFF];
++        }
++    }
++}
++
++static inline void escha_decode_tile_k3(const uint16_t * w, float wtile[16][16]) {
++    const escha_k3_lane * lanes = escha_k3_lanes;
++    for (int lane = 0; lane < 32; ++lane) {
++        const escha_k3_lane & lp = lanes[lane];
++        uint32_t lo, hi;
++        memcpy(&lo, (const char *) w + 4*lp.lo_idx, 4);
++        memcpy(&hi, (const char *) w + 4*lp.hi_idx, 4);
++        const uint64_t z = (uint64_t) lo | ((uint64_t) hi << 32);
++        const uint64_t p = z >> lp.shift;
++        const uint64_t r = z >> (lp.shift + 12);
++        const int colbase = 2*(lane >> 3) + ((lane >> 2) & 1);
++        const int rowbase = 2*(lane & 3);
++        for (int c = 0; c < 8; ++c) {
++            const int row = rowbase + (c & 1) + 8*(1 - ((c >> 1) & 1));
++            const int col = (c < 4 ? 8 : 0) + colbase;
++            const uint64_t win = (c < 4) ? (p >> (3*c)) : (r >> (3*(c - 4)));
++            wtile[row][col] = escha_cba_lut[(uint32_t)(win & 0xFFFF)];
++        }
++    }
++}
++
++// in-place normalized blockwise Hadamard, one 128-wide block
++static inline void escha_h128(float * v) {
++    for (int step = 1; step < 128; step <<= 1) {
++        for (int i = 0; i < 128; i += step << 1) {
++            for (int j = i; j < i + step; ++j) {
++                const float a = v[j];
++                const float b = v[j + step];
++                v[j]        = a + b;
++                v[j + step] = a - b;
++            }
++        }
++    }
++    const float inv_sqrt128 = 0.08838834764831845f; // 1/sqrt(128)
++    for (int j = 0; j < 128; ++j) {
++        v[j] *= inv_sqrt128;
++    }
++}
++
++void ggml_compute_forward_escha_mm(const ggml_compute_params * params, ggml_tensor * dst) {
++    const ggml_tensor * src0 = dst->src[0]; // codes
++    const ggml_tensor * src1 = dst->src[1]; // x
++    const ggml_tensor * src2 = dst->src[2]; // aux
++
++    GGML_ASSERT(src0->type == GGML_TYPE_ESCHA2 || src0->type == GGML_TYPE_ESCHA3);
++    GGML_ASSERT(src1->type == GGML_TYPE_F32 && src2->type == GGML_TYPE_F32);
++    GGML_ASSERT(dst->type  == GGML_TYPE_F32);
++    GGML_ASSERT(ggml_is_contiguous(src0));
++    GGML_ASSERT(ggml_is_contiguous(src1));
++    GGML_ASSERT(ggml_is_contiguous(src2));
++    GGML_ASSERT(ggml_is_contiguous(dst));
++
++    const int K = (src0->type == GGML_TYPE_ESCHA2) ? 2 : 3;
++
++    const int64_t n_in  = src0->ne[0];
++    const int64_t n_out = src0->ne[1];
++    const int64_t ncols = src1->ne[1] * src1->ne[2] * src1->ne[3];
++
++    GGML_ASSERT(src1->ne[0] == n_in);
++    GGML_ASSERT(dst->ne[0]  == n_out);
++    GGML_ASSERT(n_in  % 128 == 0);
++    GGML_ASSERT(n_out % 128 == 0);
++    GGML_ASSERT(ggml_nelements(src2) == n_in + 2*n_out);
++
++    std::call_once(escha_lut_once, escha_build_lut);
++    if (K == 3) {
++        std::call_once(escha_k3_once, escha_build_k3_lanes);
++    }
++
++    const uint16_t * codes = (const uint16_t *) src0->data;
++    const float    * x     = (const float    *) src1->data;
++    const float    * rin   = (const float    *) src2->data;
++    const float    * rout  = rin + n_in;
++    const float    * bias  = rout + n_out;
++    float          * y     = (float          *) dst->data;
++
++    const int64_t Tin  = n_in  / 16;
++    const int64_t Tout = n_out / 16;
++    const int     tile_words = 16 * K;
++
++    const int ith = params->ith;
++    const int nth = params->nth;
++
++    float * xh = (float *) params->wdata + (size_t) ith * n_in;
++
++    // work items: (col, out-block of 128) - contiguous chunks so a thread's xh
++    // is recomputed only when its column changes
++    const int64_t n_ob    = n_out / 128;
++    const int64_t n_items = ncols * n_ob;
++    const int64_t chunk   = (n_items + nth - 1) / nth;
++    const int64_t it0     = (int64_t) ith * chunk;
++    const int64_t it1     = MIN(it0 + chunk, n_items);
++
++    int64_t cur_col = -1;
++
++    for (int64_t item = it0; item < it1; ++item) {
++        const int64_t col = item / n_ob;
++        const int64_t ob  = item % n_ob;
++
++        if (col != cur_col) {
++            const float * xc = x + col * n_in;
++            for (int64_t i = 0; i < n_in; ++i) {
++                xh[i] = xc[i] * rin[i];
++            }
++            for (int64_t i = 0; i < n_in; i += 128) {
++                escha_h128(xh + i);
++            }
++            cur_col = col;
++        }
++
++        float acc[128] = { 0.0f };
++        float wtile[16][16];
++
++        for (int64_t ot = ob*8; ot < ob*8 + 8; ++ot) {
++            float * accT = acc + (ot - ob*8) * 16;
++            for (int64_t it = 0; it < Tin; ++it) {
++                const uint16_t * tw = codes + (it * Tout + ot) * tile_words;
++                if (K == 2) {
++                    escha_decode_tile_k2(tw, wtile);
++                } else {
++                    escha_decode_tile_k3(tw, wtile);
++                }
++                const float * xt = xh + it * 16;
++                for (int r = 0; r < 16; ++r) {
++                    const float xv = xt[r];
++                    for (int c = 0; c < 16; ++c) {
++                        accT[c] += xv * wtile[r][c];
++                    }
++                }
++            }
++        }
++
++        escha_h128(acc);
++
++        float * yo = y + col * n_out + ob * 128;
++        const float * ro = rout + ob * 128;
++        const float * bo = bias + ob * 128;
++        for (int j = 0; j < 128; ++j) {
++            yo[j] = acc[j] * ro[j] + bo[j];
++        }
++    }
++}
+diff --git a/ggml/src/ggml-cpu/ops.h b/ggml/src/ggml-cpu/ops.h
+index 9df1c73140..0e0fc82434 100644
+--- a/ggml/src/ggml-cpu/ops.h
++++ b/ggml/src/ggml-cpu/ops.h
+@@ -129,6 +129,9 @@ void powerinfer_forward_moe_pipeline_build_tasks(const struct ggml_compute_param
+ void powerinfer_forward_moe_pipeline_forward(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+ void powerinfer_compute_forward_print_tensor(const struct ggml_compute_params *params, struct ggml_tensor *dst);
+ 
++// -- ArifiLabs Escha-W2 fused linear (lane-164)
++void ggml_compute_forward_escha_mm(const struct ggml_compute_params * params, struct ggml_tensor * dst);
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan-push-constants.h b/ggml/src/ggml-vulkan/ggml-vulkan-push-constants.h
+index f066d10644..59cee2be9e 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan-push-constants.h
++++ b/ggml/src/ggml-vulkan/ggml-vulkan-push-constants.h
+@@ -207,6 +207,14 @@ struct vk_op_dsv4_hc_post_push_constants {
+     uint32_t d_offset;
+ };
+ 
++// ArifiLabs Escha-W2 fused linear (lane-164)
++struct vk_op_escha_mm_push_constants {
++    uint32_t n_in;
++    uint32_t n_out;
++    uint32_t ncols;
++    uint32_t Tout;
++};
++
+ struct vk_op_count_experts_push_constants {
+     uint32_t ne00;
+     uint32_t ne01;
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan-types.h b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+index d0da78466a..4078220933 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan-types.h
++++ b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+@@ -951,6 +951,7 @@ struct vk_device_struct {
+     vk_pipeline pipeline_cross_entropy_loss_f32, pipeline_cross_entropy_loss_f32_wg512;
+     vk_pipeline pipeline_cross_entropy_loss_back_f32, pipeline_cross_entropy_loss_back_f32_wg512;
+     vk_pipeline pipeline_fwht_f32[4];
++    vk_pipeline pipeline_escha_mm[2]; // [0]=ESCHA2 (K=2), [1]=ESCHA3 (K=3) — lane-164
+     vk_pipeline pipeline_cumsum_f32;
+     vk_pipeline pipeline_cumsum_small_f32;
+     vk_pipeline pipeline_cumsum_multipass1_f32;
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 905b23a76e..d155334d13 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -3756,6 +3756,10 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+         }
+     }
+ 
++    // ArifiLabs Escha-W2 fused linear (lane-164): portable shared-memory shader, fixed 128 threads
++    ggml_vk_create_pipeline(device, device->pipeline_escha_mm[0], "escha_mm_k2_f32", escha_mm_k2_f32_len, escha_mm_k2_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_escha_mm[1], "escha_mm_k3_f32", escha_mm_k3_f32_len, escha_mm_k3_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
++
+     const uint32_t cumsum_elem_per_thread = (device->vendor_id == VK_VENDOR_ID_AMD || device->vendor_id == VK_VENDOR_ID_INTEL) ? 2 : 4;
+     ggml_vk_create_pipeline(device, device->pipeline_cumsum_f32,       "cumsum_f32", cumsum_f32_len, cumsum_f32_data, "main", 2, sizeof(vk_op_sum_rows_push_constants), {1, 1, 1}, { 256, device->subgroup_size, cumsum_elem_per_thread }, 1, true, true, device->subgroup_size);
+     ggml_vk_create_pipeline(device, device->pipeline_cumsum_small_f32, "cumsum_f32", cumsum_f32_len, cumsum_f32_data, "main", 2, sizeof(vk_op_sum_rows_push_constants), {1, 1, 1}, { 128, device->subgroup_size, 1 }, 1, true, true, device->subgroup_size);
+@@ -7463,6 +7467,40 @@ void ggml_vk_dsv4_hc_post(ggml_backend_vk_context * ctx, vk_context& subctx, con
+     ggml_vk_dispatch_pipeline(ctx, subctx, pipeline, { x_buf, r_buf, p_buf, c_buf, d_buf }, pc, { n_embd, n_tokens, 1 });
+ }
+ 
++// ArifiLabs Escha-W2 fused linear (lane-164)
++static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx, ggml_tensor * dst) {
++    const ggml_tensor * src0 = dst->src[0]; // packed codes
++    const ggml_tensor * src1 = dst->src[1]; // x
++    const ggml_tensor * src2 = dst->src[2]; // aux
++
++    GGML_ASSERT(dst->buffer != nullptr);
++    GGML_ASSERT(ggml_is_contiguous(src0));
++    GGML_ASSERT(ggml_is_contiguous(src1));
++    GGML_ASSERT(ggml_is_contiguous(src2));
++
++    const uint32_t n_in  = (uint32_t) src0->ne[0];
++    const uint32_t n_out = (uint32_t) src0->ne[1];
++    const uint32_t ncols = (uint32_t) (src1->ne[1] * src1->ne[2] * src1->ne[3]);
++
++    vk_pipeline pipeline = ctx->device->pipeline_escha_mm[src0->type == GGML_TYPE_ESCHA3 ? 1 : 0];
++    GGML_ASSERT(pipeline != nullptr);
++
++    ggml_pipeline_request_descriptor_sets(ctx, pipeline, 1);
++
++    const vk_op_escha_mm_push_constants pc = {
++        n_in, n_out, ncols, n_out / 16,
++    };
++
++    const vk_subbuffer a_buf   = ggml_vk_tensor_subbuffer(ctx, src0);
++    const vk_subbuffer b_buf   = ggml_vk_tensor_subbuffer(ctx, src1);
++    const vk_subbuffer aux_buf = ggml_vk_tensor_subbuffer(ctx, src2);
++    const vk_subbuffer dst_buf = ggml_vk_tensor_subbuffer(ctx, dst);
++
++    const std::array<uint32_t, 3> elements = { n_out / 128, ncols, 1 };
++
++    ggml_vk_dispatch_pipeline(ctx, subctx, pipeline, { a_buf, b_buf, aux_buf, dst_buf }, pc, elements);
++}
++
+ void ggml_vk_mul_mat(ggml_backend_vk_context * ctx, vk_context& subctx, const struct ggml_cgraph * cgraph, int node_idx) {
+     ggml_tensor * dst = cgraph->nodes[node_idx];
+     ggml_tensor * src0 = dst->src[0];
+@@ -9434,6 +9472,14 @@ static vk_pipeline ggml_vk_op_get_pipeline(ggml_backend_vk_context * ctx, const
+             }
+         }
+         return nullptr;
++    case GGML_OP_ESCHA_MM:
++        if (src0->type == GGML_TYPE_ESCHA2) {
++            return ctx->device->pipeline_escha_mm[0];
++        }
++        if (src0->type == GGML_TYPE_ESCHA3) {
++            return ctx->device->pipeline_escha_mm[1];
++        }
++        return nullptr;
+     case GGML_OP_SSM_CONV:
+         if (src0->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32) {
+             switch (ctx->num_additional_fused_ops) {
+@@ -13020,6 +13066,11 @@ bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgraph, in
+ 
+         break;
+ 
++    case GGML_OP_ESCHA_MM:
++        ggml_vk_escha_mm(ctx, compute_ctx, node);
++
++        break;
++
+     case GGML_OP_SSM_CONV:
+         ggml_vk_ssm_conv(ctx, compute_ctx, cgraph, node_idx);
+ 
+@@ -16325,6 +16376,13 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+                 }
+                 return op->type == GGML_TYPE_F32;
+             }
++        case GGML_OP_ESCHA_MM:
++            // lane-164: fused escha linear; the shader is portable (no special features)
++            return (op->src[0]->type == GGML_TYPE_ESCHA2 || op->src[0]->type == GGML_TYPE_ESCHA3) &&
++                   op->src[1]->type == GGML_TYPE_F32 && op->src[2]->type == GGML_TYPE_F32 &&
++                   op->type == GGML_TYPE_F32 &&
++                   ggml_is_contiguous(op->src[0]) && ggml_is_contiguous(op->src[1]) &&
++                   op->src[0]->ne[0] % 256 == 0 && op->src[0]->ne[1] % 128 == 0;
+         case GGML_OP_SSM_SCAN:
+             {
+                 for (int i = 0; i < 6; i++) {
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp b/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp
+new file mode 100644
+index 0000000000..a05c01e051
+--- /dev/null
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp
+@@ -0,0 +1,174 @@
++#version 450
++
++#extension GL_EXT_control_flow_attributes : require
++
++// ArifiLabs Escha-W2 fused linear mat-vec (lane-164).
++//
++//   y = D(rout*s_out) * H128( decode(codes)^T * H128(D(rin*s_in) * x) ) + bias
++//
++// One workgroup = one 128-channel output block (8 adjacent 16x16 code tiles per
++// in-block) for one activation column. Thread j owns output channel ob*128+j.
++// The activation block is staged + Hadamard-transformed in shared memory
++// (portable barriers version; the lane-163 subgroup butterfly is an upgrade path).
++//
++// Decode math is the recovered cbA generator (Terra-64, trial-evidence/escha-decoder):
++// deterministic-by-spec here — integer ops, unpackHalf2x16 (exact), one f32 add
++// (correctly rounded per Vulkan), and a SOFTWARE f32->f16 RTE round, so no
++// dependence on driver f16 float-controls (Terra-66: glslc does not emit them).
++// Compile with ESCHA_K = 2 or 3.
++
++layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
++
++layout (push_constant) uniform parameter {
++    uint n_in;
++    uint n_out;
++    uint ncols;
++    uint Tout;      // n_out/16
++} p;
++
++layout (binding = 0) readonly  buffer A { uint  data_a[]; };  // packed codes, u32 view
++layout (binding = 1) readonly  buffer B { float data_b[]; };  // x [n_in, ncols]
++layout (binding = 2) readonly  buffer C { float data_c[]; };  // aux: rin | rout | bias
++layout (binding = 3) writeonly buffer D { float data_d[]; };  // y [n_out, ncols]
++
++shared float sh[128];
++
++const float INV_SQRT128 = 0.08838834764831845;
++
++#if ESCHA_K == 2
++#define TILE_U32S 16u
++#else
++#define TILE_U32S 24u
++#endif
++
++// software round-to-nearest-even f32 -> f16 bit pattern (denormal-correct)
++uint f32_to_f16_rte(float f) {
++    const uint x    = floatBitsToUint(f);
++    const uint sign = (x >> 16) & 0x8000u;
++    const int  e    = int((x >> 23) & 0xFFu) - 127 + 15;
++    uint m = x & 0x7FFFFFu;
++    if (e >= 31) {
++        return sign | 0x7C00u;
++    }
++    if (e <= 0) {
++        if (e < -10) {
++            return sign;
++        }
++        m |= 0x800000u;
++        const uint shift = uint(14 - e);
++        const uint r = (m + (1u << (shift - 1u)) - 1u + ((m >> shift) & 1u)) >> shift;
++        return sign | r;
++    }
++    uint r = m + 0xFFFu + ((m >> 13) & 1u);
++    uint ee = uint(e);
++    if ((r & 0x800000u) != 0u) {
++        r = 0u;
++        ee += 1u;
++        if (ee >= 31u) {
++            return sign | 0x7C00u;
++        }
++    }
++    return sign | (ee << 10) | (r >> 13);
++}
++
++// the recovered cbA scalar generator F(x) on a 16-bit window
++float escha_F(uint xw) {
++    const uint q = 0x3B603B60u ^ ((xw * 0xCBAC1FEDu) & 0x8FFF8FFFu);
++    const vec2 h = unpackHalf2x16(q);
++    const float s = h.x + h.y;                     // exact operands; correctly-rounded f32 add
++    return unpackHalf2x16(f32_to_f16_rte(s)).x;    // value of the f16-rounded sum
++}
++
++uint word16(uint base_u32, uint idx) {
++    return (data_a[base_u32 + (idx >> 1u)] >> (16u * (idx & 1u))) & 0xFFFFu;
++}
++
++#if ESCHA_K == 3
++// 64-bit funnel shift via two u32s, shift in {0,8,16,24,12,20,28,36}; no shaderInt64
++uint shr64_32(uint lo, uint hi, uint s) {
++    if (s == 0u)  return lo;
++    if (s < 32u)  return (lo >> s) | (hi << (32u - s));
++    if (s == 32u) return hi;
++    return hi >> (s - 32u);
++}
++#endif
++
++void hadamard128(uint tid) {
++    [[unroll]] for (uint step = 1u; step < 128u; step <<= 1u) {
++        const float a = sh[tid];
++        const float o = sh[tid ^ step];
++        barrier();
++        sh[tid] = ((tid & step) == 0u) ? (a + o) : (o - a);
++        barrier();
++    }
++}
++
++void main() {
++    const uint tid  = gl_LocalInvocationID.x;
++    const uint ob   = gl_WorkGroupID.x;      // output 128-block
++    const uint col  = gl_WorkGroupID.y;      // activation column
++    const uint ot   = ob * 8u + (tid >> 4u); // this thread's out tile
++    const uint tcol = tid & 15u;             // column within the tile
++
++    // lanes serving this tile column (Terra-64 scatter, inverted for a fixed col)
++    const uint colbase = tcol & 7u;
++    const uint lhi     = ((colbase >> 1u) << 3u) | ((colbase & 1u) << 2u);
++    // col >= 8 was produced by components c in 0..3; col < 8 by c in 4..7
++    const uint c0      = (tcol >= 8u) ? 0u : 4u;
++
++    float acc = 0.0;
++
++    const uint n_ib = p.n_in / 128u;
++    for (uint ib = 0u; ib < n_ib; ++ib) {
++        const uint gi = ib * 128u + tid;
++        sh[tid] = data_b[col * p.n_in + gi] * data_c[gi];
++        barrier();
++        hadamard128(tid);
++        // fold the input-side 1/sqrt(128): sh is read-only below, scale at use
++
++        for (uint t = 0u; t < 8u; ++t) {
++            const uint it   = ib * 8u + t;
++            const uint base = (it * p.Tout + ot) * TILE_U32S;
++
++            [[unroll]] for (uint b = 0u; b < 4u; ++b) {
++                const uint lane = lhi + b;
++#if ESCHA_K == 2
++                const uint word = word16(base, lane ^ 1u);
++                [[unroll]] for (uint k = 0u; k < 4u; ++k) {
++                    const uint c   = c0 + k;
++                    const uint row = 2u*b + (c & 1u) + 8u*(1u - ((c >> 1u) & 1u));
++                    acc += sh[t*16u + row] * escha_F((word >> (2u*c)) & 0xFFFFu);
++                }
++#else
++                // K=3 crossed 96-byte bitstream (PTX lines 2282-2312)
++                const uint tt   = 24u * lane;
++                const uint aa   = tt + 755u;
++                const uint bb   = tt + 791u;
++                const uint sh0  = ((bb & 2016u) - tt) - 760u;
++                const uint hw   = (lane == 0u) ? 23u : ((aa >> 5u) - 24u);
++                const uint lw   = (((bb >> 3u) & 252u) - 96u) >> 2u;
++                const uint zlo  = data_a[base + lw];
++                const uint zhi  = data_a[base + hw];
++                const uint pp   = shr64_32(zlo, zhi, sh0);
++                const uint rr   = shr64_32(zlo, zhi, sh0 + 12u);
++                [[unroll]] for (uint k = 0u; k < 4u; ++k) {
++                    const uint c   = c0 + k;
++                    const uint row = 2u*b + (c & 1u) + 8u*(1u - ((c >> 1u) & 1u));
++                    const uint win = (c < 4u) ? (pp >> (3u*c)) : (rr >> (3u*(c - 4u)));
++                    acc += sh[t*16u + row] * escha_F(win & 0xFFFFu);
++                }
++#endif
++            }
++        }
++        barrier(); // all reads of sh done before the next block overwrites it
++    }
++
++    // output-side transform + scales + bias; both 1/sqrt(128) factors fold here
++    sh[tid] = acc;
++    barrier();
++    hadamard128(tid);
++    const uint oc = ob * 128u + tid;
++    const float yv = sh[tid] * (INV_SQRT128 * INV_SQRT128) * data_c[p.n_in + oc]
++                   + data_c[p.n_in + p.n_out + oc];
++    data_d[col * p.n_out + oc] = yv;
++}
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+index 55e07a6dea..5c954cf4b2 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+@@ -1295,6 +1295,10 @@ void process_shaders() {
+     string_to_spv("cross_entropy_loss_back_f32", "cross_entropy_loss_back.comp", merge_maps(base_dict, {{"A_TYPE", "float"}, {"B_TYPE", "float"}, {"D_TYPE", "float"}}));
+     string_to_spv("fwht_f32", "fwht.comp", {});
+     string_to_spv("fwht_shmem_f32", "fwht.comp", {{"FWHT_SHMEM", "1"}});
++
++    // ArifiLabs Escha-W2 fused linear (lane-164)
++    string_to_spv("escha_mm_k2_f32", "escha_mm.comp", {{"ESCHA_K", "2"}});
++    string_to_spv("escha_mm_k3_f32", "escha_mm.comp", {{"ESCHA_K", "3"}});
+     string_to_spv("count_equal_i32", "count_equal.comp", merge_maps(base_dict, {{"A_TYPE", "int"}, {"B_TYPE", "int"}, {"D_TYPE", "int"}}));
+     string_to_spv("dsv4_hc_comb_f32", "dsv4_hc_comb.comp", {});
+     string_to_spv("dsv4_hc_pre_f32",  "dsv4_hc_pre.comp",  {});
+diff --git a/ggml/src/ggml.c b/ggml/src/ggml.c
+index cd4d541205..e42832dbd7 100644
+--- a/ggml/src/ggml.c
++++ b/ggml/src/ggml.c
+@@ -703,6 +703,21 @@ static const struct ggml_type_traits type_traits[GGML_TYPE_COUNT] = {
+         .to_float                 = (ggml_to_float_t) dequantize_row_q2_0_g128,
+         .from_float_ref           = (ggml_from_float_t) quantize_row_q2_0_g128_ref,
+     },
++    // ArifiLabs Escha-W2 packed cbA code tiles (lane-164, TYPE-ID-ALLOCATION §3.1).
++    // NOT row-separable: no to_float / from_float. Sole consumer is GGML_OP_ESCHA_MM;
++    // every generic row-wise path must reject these types.
++    [GGML_TYPE_ESCHA2] = {
++        .type_name                = "escha2",
++        .blck_size                = 256,           // one 16x16 tile
++        .type_size                = 64,            // 32 x int16 codewords
++        .is_quantized             = true,
++    },
++    [GGML_TYPE_ESCHA3] = {
++        .type_name                = "escha3",
++        .blck_size                = 256,
++        .type_size                = 96,            // 48 x int16 codewords
++        .is_quantized             = true,
++    },
+ #ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
+     // TurboQuant serialized weight formats, ids adopted verbatim (TYPE-ID-ALLOCATION §3.1).
+     // Taken-from: llama-cpp-turboquant@c26cbdffc.
+@@ -1252,9 +1267,11 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
+     "MOE_PIPELINE_FORWARD",
+     "PRINT_TENSOR",
+ 
++    "ESCHA_MM",
++
+ };
+ 
+-static_assert(GGML_OP_COUNT == 109, "GGML_OP_COUNT != 109");
++static_assert(GGML_OP_COUNT == 110, "GGML_OP_COUNT != 110");
+ 
+ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
+     "none",
+@@ -1377,9 +1394,11 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
+     "moe_pipeline_forward",
+     "print_tensor",
+ 
++    "escha_mm(x)",
++
+ };
+ 
+-static_assert(GGML_OP_COUNT == 109, "GGML_OP_COUNT != 109");
++static_assert(GGML_OP_COUNT == 110, "GGML_OP_COUNT != 110");
+ 
+ static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
+ 
+@@ -3562,6 +3581,33 @@ void ggml_mul_mat_set_prec(
+     ggml_set_op_params_i32(a, 0, prec_i32);
+ }
+ 
++// ggml_escha_mm — ArifiLabs Escha-W2 fused linear (lane-164)
++
++struct ggml_tensor * ggml_escha_mm(
++        struct ggml_context * ctx,
++        struct ggml_tensor  * a,
++        struct ggml_tensor  * b,
++        struct ggml_tensor  * aux) {
++    GGML_ASSERT(a->type == GGML_TYPE_ESCHA2 || a->type == GGML_TYPE_ESCHA3);
++    GGML_ASSERT(b->type == GGML_TYPE_F32);
++    GGML_ASSERT(aux->type == GGML_TYPE_F32);
++    GGML_ASSERT(a->ne[0] == b->ne[0]);
++    GGML_ASSERT(a->ne[0] % 256 == 0 && a->ne[1] % 128 == 0);
++    GGML_ASSERT(ggml_nelements(aux) == a->ne[0] + 2*a->ne[1]);
++    GGML_ASSERT(ggml_is_contiguous(a) && ggml_is_contiguous(aux));
++    GGML_ASSERT(a->ne[2] == 1 && a->ne[3] == 1);
++
++    const int64_t ne[4] = { a->ne[1], b->ne[1], b->ne[2], b->ne[3] };
++    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, 4, ne);
++
++    result->op     = GGML_OP_ESCHA_MM;
++    result->src[0] = a;
++    result->src[1] = b;
++    result->src[2] = aux;
++
++    return result;
++}
++
+ void ggml_mul_mat_set_hint(
+         struct ggml_tensor * a,
+         enum ggml_op_hint    hint) {
+diff --git a/gguf-py/gguf/constants.py b/gguf-py/gguf/constants.py
+index a655786077..af01945134 100644
+--- a/gguf-py/gguf/constants.py
++++ b/gguf-py/gguf/constants.py
+@@ -5719,6 +5719,9 @@ class GGMLQuantizationType(IntEnum):
+     Q2_0    = 42
+     TQ3_1S  = 45
+     TQ4_1S  = 46
++    # ArifiLabs Escha-W2 packed cbA code tiles (lane-164, TYPE-ID-ALLOCATION §3.1)
++    ESCHA2  = 55
++    ESCHA3  = 56
+     # ROCmFPX weight formats. Taken-from: charlie12345/ROCmFPX@3edc3d31e.
+     Q4_0_ROCMFP4      = 100
+     Q4_0_ROCMFP4_FAST = 101
+@@ -5943,6 +5946,8 @@ GGML_QUANT_SIZES: dict[GGMLQuantizationType, tuple[int, int]] = {
+     GGMLQuantizationType.NVFP4:   (64, 4 + 32),
+     GGMLQuantizationType.Q1_0:    (128, 2 + 16),
+     GGMLQuantizationType.Q2_0:    (64, 2 + 16),
++    GGMLQuantizationType.ESCHA2:  (256, 64),
++    GGMLQuantizationType.ESCHA3:  (256, 96),
+     GGMLQuantizationType.Q4_0_ROCMFP4:      (32, 2 + 16),
+     GGMLQuantizationType.Q4_0_ROCMFP4_FAST: (32, 1 + 16),
+     GGMLQuantizationType.Q6_0_ROCMFPX:      (32, 24 + 2),
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index 906f045605..1858ee855b 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -2957,6 +2957,7 @@ llm_graph_params llama_context::graph_params(
+         /*.loras       =*/ loras.get(),
+         /*.mctx        =*/ mctx,
+         /*.cross       =*/ &cross,
++        /*.mdl         =*/ &model,
+         /*.samplers    =*/ sampling.samplers,
+         /*.n_outputs   =*/ n_outputs,
+         /*.cb          =*/ graph_get_cb(),
+diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
+index f0edc93c13..fa72cd0dea 100644
+--- a/src/llama-graph.cpp
++++ b/src/llama-graph.cpp
+@@ -1506,6 +1506,7 @@ llm_graph_context::llm_graph_context(const llm_graph_params & params) :
+     loras            (params.loras),
+     mctx             (params.mctx),
+     cross            (params.cross),
++    mdl              (params.mdl),
+     samplers         (params.samplers),
+     cb_func          (params.cb),
+     res              (params.res),
+@@ -1532,6 +1533,16 @@ ggml_tensor * llm_graph_context::build_lora_mm(
+           ggml_tensor * w,
+           ggml_tensor * cur,
+           ggml_tensor * w_s) const {
++    // ArifiLabs Escha-W2 (lane-164): escha-typed weights route to the fused op,
++    // with the aux sidecar resolved from the model. LoRA/scale do not apply.
++    if (w->type == GGML_TYPE_ESCHA2 || w->type == GGML_TYPE_ESCHA3) {
++        GGML_ASSERT(mdl != nullptr && "escha weight but no model in graph params");
++        ggml_tensor * aux = mdl->get_escha_aux(w);
++        GGML_ASSERT(aux != nullptr && "escha weight without aux sidecar");
++        GGML_ASSERT(w_s == nullptr);
++        return ggml_escha_mm(ctx0, w, cur, aux);
++    }
++
+     ggml_tensor * res = ggml_mul_mat(ctx0, w, cur);
+ 
+     if (w_s) {
+diff --git a/src/llama-graph.h b/src/llama-graph.h
+index 7c1a5bf2b4..23808c0d66 100644
+--- a/src/llama-graph.h
++++ b/src/llama-graph.h
+@@ -786,6 +786,9 @@ struct llm_graph_params {
+     const llama_memory_context_i * mctx;
+     const llama_cross            * cross;
+ 
++    // the model, for weight-companion lookups (escha aux sidecars, lane-164)
++    const llama_model * mdl = nullptr;
++
+     std::map<llama_seq_id, llama_sampler *> samplers;
+ 
+     static bool samplers_equal(
+@@ -1024,6 +1027,8 @@ struct llm_graph_context {
+     const llama_memory_context_i * mctx;
+     const llama_cross            * cross;
+ 
++    const llama_model * mdl; // escha aux lookups (lane-164)
++
+     std::map<llama_seq_id, llama_sampler *> samplers;
+ 
+     const llm_graph_cb & cb_func;
+diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
+index 0415ce4ac6..71d9337035 100644
+--- a/src/llama-model-loader.cpp
++++ b/src/llama-model-loader.cpp
+@@ -1171,6 +1171,13 @@ static bool weight_buft_supported(const llama_hparams & hparams, ggml_tensor * w
+             } break;
+         case GGML_OP_MUL_MAT:
+             {
++                if (w->type == GGML_TYPE_ESCHA2 || w->type == GGML_TYPE_ESCHA3) {
++                    // escha weights are consumed by the fused op, never by MUL_MAT (lane-164)
++                    ggml_tensor * b   = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, w->ne[0], 512);
++                    ggml_tensor * aux = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, w->ne[0] + 2*w->ne[1]);
++                    op_tensor = ggml_escha_mm(ctx, w, b, aux);
++                    break;
++                }
+                 ggml_tensor * b = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, w->ne[0], 512, w->ne[2], w->ne[3]);
+                 op_tensor = ggml_mul_mat(ctx, w, b);
+             } break;
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index b9a5b53048..d59ac60576 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -1743,6 +1743,27 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+             if (!layer.nextn.shared_head_head_in_s && layer.nextn.shared_head_head) {
+                 layer.nextn.shared_head_head_in_s = create_tensor(tn(LLM_TENSOR_NEXTN_SHARED_HEAD_HEAD, "input_scale", i), {1}, TENSOR_NOT_REQUIRED);
+             }
++
++            // ArifiLabs Escha-W2 (lane-164): every escha-typed weight REQUIRES its
++            // f32 aux sidecar (rin*s_in | rout*s_out | bias) — loud fail if absent.
++            {
++                const auto load_escha_aux = [&](ggml_tensor * w, llm_tensor tt) {
++                    if (w && (w->type == GGML_TYPE_ESCHA2 || w->type == GGML_TYPE_ESCHA3)) {
++                        ggml_tensor * aux = create_tensor(tn(tt, "escha_aux", i), { w->ne[0] + 2*w->ne[1] }, 0);
++                        escha_aux[w] = aux;
++                    }
++                };
++                load_escha_aux(layer.wq,        LLM_TENSOR_ATTN_Q);
++                load_escha_aux(layer.wk,        LLM_TENSOR_ATTN_K);
++                load_escha_aux(layer.wv,        LLM_TENSOR_ATTN_V);
++                load_escha_aux(layer.wo,        LLM_TENSOR_ATTN_OUT);
++                load_escha_aux(layer.wqkv,      LLM_TENSOR_ATTN_QKV);
++                load_escha_aux(layer.wqkv_gate, LLM_TENSOR_ATTN_GATE);
++                load_escha_aux(layer.ssm_out,   LLM_TENSOR_SSM_OUT);
++                load_escha_aux(layer.ffn_gate,  LLM_TENSOR_FFN_GATE);
++                load_escha_aux(layer.ffn_up,    LLM_TENSOR_FFN_UP);
++                load_escha_aux(layer.ffn_down,  LLM_TENSOR_FFN_DOWN);
++            }
+         }
+         // output scales
+         if (output && output->type == GGML_TYPE_NVFP4) {
+diff --git a/src/llama-model.h b/src/llama-model.h
+index 9572ea07dd..57cb02ebbb 100644
+--- a/src/llama-model.h
++++ b/src/llama-model.h
+@@ -711,6 +711,15 @@ struct llama_model {
+ 
+     std::vector<llama_layer> layers;
+ 
++    // ArifiLabs Escha-W2 (lane-164): escha-typed weight -> f32 aux sidecar
++    // (rin*s_in | rout*s_out | bias), consumed by GGML_OP_ESCHA_MM
++    std::map<const ggml_tensor *, ggml_tensor *> escha_aux;
++
++    ggml_tensor * get_escha_aux(const ggml_tensor * w) const {
++        const auto it = escha_aux.find(w);
++        return it == escha_aux.end() ? nullptr : it->second;
++    }
++
+     //Dense linear projections for SentenceTransformers models like embeddinggemma
+     // For Sentence Transformers models structure see
+     // https://sbert.net/docs/sentence_transformer/usage/custom_models.html#structure-of-sentence-transformer-models
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+index adbc1e3e72..73e963315d 100644
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -403,6 +403,9 @@ target_link_libraries(${TEST_TARGET} PRIVATE llama)
+ # TurboQuant WHT round-trip test (links ggml turbo codec symbols via llama)
+ llama_build_and_test(test-turbo-quant.c LABEL "turbo")
+ 
++# ArifiLabs Escha-W2 (lane-164): CPU kernel vs Python goldens (fixtures dir passed manually)
++llama_build_and_test(test-escha-mm.cpp)
++
+ if (NOT LLAMA_USE_SYSTEM_GGML)
+     # Needs non-public ggml-impl.h
+     llama_build_and_test(test-gguf.cpp)
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index 89f0b3b9e9..847c76975a 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -4741,6 +4741,52 @@ struct test_dsv4_hc_post : public test_dsv4_hc {
+ 
+ 
+ // GGML_OP_SSM_CONV
++// GGML_OP_ESCHA_MM — ArifiLabs Escha-W2 fused linear (lane-164)
++struct test_escha_mm : public test_case {
++    const ggml_type type;   // GGML_TYPE_ESCHA2 or GGML_TYPE_ESCHA3
++    const int64_t n_in;
++    const int64_t n_out;
++    const int64_t ncols;
++
++    std::string vars() override {
++        return VARS_TO_STR4(type, n_in, n_out, ncols);
++    }
++
++    double max_nmse_err() override {
++        return 1e-6; // decode is integer-deterministic; only accumulation order differs
++    }
++
++    test_escha_mm(ggml_type type = GGML_TYPE_ESCHA2, int64_t n_in = 512, int64_t n_out = 256, int64_t ncols = 4)
++        : type(type), n_in(n_in), n_out(n_out), ncols(ncols) {}
++
++    ggml_tensor * build_graph(ggml_context * ctx) override {
++        ggml_tensor * a   = ggml_new_tensor_2d(ctx, type, n_in, n_out);
++        ggml_tensor * b   = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_in, ncols);
++        ggml_tensor * aux = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_in + 2*n_out);
++        ggml_set_name(a, "codes");
++        ggml_set_name(b, "x");
++        ggml_set_name(aux, "aux");
++        return ggml_escha_mm(ctx, a, b, aux);
++    }
++
++    void initialize_tensors(ggml_context * ctx) override {
++        std::default_random_engine gen(0xE5C4A);
++        for (ggml_tensor * t = ggml_get_first_tensor(ctx); t != nullptr; t = ggml_get_next_tensor(ctx, t)) {
++            if (t->type == GGML_TYPE_ESCHA2 || t->type == GGML_TYPE_ESCHA3) {
++                // any random bytes are valid escha codes
++                std::vector<uint8_t> data(ggml_nbytes(t));
++                std::uniform_int_distribution<int> dist(0, 255);
++                for (auto & v : data) {
++                    v = (uint8_t) dist(gen);
++                }
++                ggml_backend_tensor_set(t, data.data(), 0, data.size());
++            } else {
++                init_tensor_uniform(t);
++            }
++        }
++    }
++};
++
+ struct test_ssm_conv : public test_case {
+     const ggml_type type;
+     const std::array<int64_t, 4> ne_a;
+@@ -10373,6 +10419,15 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+     }
+     for (int64_t d_conv : {3, 4, 9}) {
+         for (int64_t d_inner: {1024, 1536, 2048}) {
++            // ArifiLabs Escha-W2 fused linear (lane-164): mat-vec + batched, both K rates,
++            // plus the real 27B projection shapes
++            test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA2, 512, 256, 1));
++            test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA2, 512, 256, 4));
++            test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA3, 512, 256, 1));
++            test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA3, 512, 256, 4));
++            test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA2, 5120, 12288, 2));
++            test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA3, 17408, 5120, 2));
++
+             test_cases.emplace_back(new test_ssm_conv(GGML_TYPE_F32, {d_conv, d_inner, 1, 1}, {d_conv, d_inner, 1, 1}));
+             test_cases.emplace_back(new test_ssm_conv(GGML_TYPE_F32, {2 * d_conv, d_inner, 1, 1}, {d_conv, d_inner, 1, 1}));
+             test_cases.emplace_back(new test_ssm_conv(GGML_TYPE_F32, {d_conv, d_inner, 4, 1}, {d_conv, d_inner, 1, 1}));
+diff --git a/tests/test-escha-mm.cpp b/tests/test-escha-mm.cpp
+new file mode 100644
+index 0000000000..8d04cd5163
+--- /dev/null
++++ b/tests/test-escha-mm.cpp
+@@ -0,0 +1,97 @@
++// ArifiLabs Escha-W2 (lane-164): CPU GGML_OP_ESCHA_MM vs Python golden fixtures.
++//
++// The goldens come from an independent route: the numpy port of the recovered cbA
++// decoder (bit-exact vs trial-evidence/escha-decoder/tools/decode_cba.py) plus a
++// float64 Hadamard/scale/bias chain. See lane-evidence make_escha_mm_fixtures.py.
++//
++// Usage: test-escha-mm <fixtures-dir>   (skips with exit 0 if no dir given)
++
++#include "ggml.h"
++#include "ggml-cpu.h"
++
++#include <cmath>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <string>
++#include <vector>
++
++static std::vector<uint8_t> read_file(const std::string & p) {
++    FILE * f = fopen(p.c_str(), "rb");
++    if (!f) {
++        fprintf(stderr, "FATAL: cannot open %s\n", p.c_str());
++        exit(1);
++    }
++    fseek(f, 0, SEEK_END);
++    const long n = ftell(f);
++    fseek(f, 0, SEEK_SET);
++    std::vector<uint8_t> v(n);
++    if (fread(v.data(), 1, n, f) != (size_t) n) {
++        fprintf(stderr, "FATAL: short read %s\n", p.c_str());
++        exit(1);
++    }
++    fclose(f);
++    return v;
++}
++
++static int run_case(const std::string & dir, int K, bool plant_mismatch) {
++    const int64_t n_in = 256, n_out = 128, ncols = 3;
++
++    auto codes = read_file(dir + "/k" + std::to_string(K) + "_codes.bin");
++    auto xbuf  = read_file(dir + "/k" + std::to_string(K) + "_x.bin");
++    auto aux   = read_file(dir + "/k" + std::to_string(K) + "_aux.bin");
++    auto ybuf  = read_file(dir + "/k" + std::to_string(K) + "_y.bin");
++
++    if (plant_mismatch) {
++        codes[100] ^= 1; // one flipped code bit must be detected (F-043 planted positive)
++    }
++
++    struct ggml_init_params ip = { 256*1024*1024, nullptr, false };
++    struct ggml_context * ctx = ggml_init(ip);
++
++    struct ggml_tensor * a = ggml_new_tensor_2d(ctx, K == 2 ? GGML_TYPE_ESCHA2 : GGML_TYPE_ESCHA3, n_in, n_out);
++    struct ggml_tensor * b = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_in, ncols);
++    struct ggml_tensor * c = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_in + 2*n_out);
++
++    GGML_ASSERT(ggml_nbytes(a) == codes.size());
++    GGML_ASSERT(ggml_nbytes(b) == xbuf.size());
++    GGML_ASSERT(ggml_nbytes(c) == aux.size());
++
++    memcpy(a->data, codes.data(), codes.size());
++    memcpy(b->data, xbuf.data(),  xbuf.size());
++    memcpy(c->data, aux.data(),   aux.size());
++
++    struct ggml_tensor * y = ggml_escha_mm(ctx, a, b, c);
++    struct ggml_cgraph * gf = ggml_new_graph(ctx);
++    ggml_build_forward_expand(gf, y);
++    ggml_graph_compute_with_ctx(ctx, gf, 4);
++
++    const float * got = (const float *) y->data;
++    const float * ref = (const float *) ybuf.data();
++
++    double num = 0.0, den = 0.0;
++    for (int64_t i = 0; i < n_out*ncols; ++i) {
++        num += (got[i] - ref[i]) * (double)(got[i] - ref[i]);
++        den += (double) ref[i] * ref[i];
++    }
++    const double nmse = num / den;
++    const bool ok = nmse < 1e-9; // f32-vs-f64 chain noise only; a decode bug is >> this
++
++    printf("K=%d%s: nmse=%.3e -> %s\n", K, plant_mismatch ? " (planted)" : "", nmse,
++           plant_mismatch ? (ok ? "NOT DETECTED (BAD)" : "detected (good)") : (ok ? "PASS" : "FAIL"));
++
++    ggml_free(ctx);
++    return plant_mismatch ? (ok ? 1 : 0) : (ok ? 0 : 1);
++}
++
++int main(int argc, char ** argv) {
++    if (argc < 2) {
++        printf("test-escha-mm: no fixtures dir given, skipping\n");
++        return 0;
++    }
++    int rc = 0;
++    rc |= run_case(argv[1], 2, false);
++    rc |= run_case(argv[1], 3, false);
++    rc |= run_case(argv[1], 3, true);
++    return rc;
++}

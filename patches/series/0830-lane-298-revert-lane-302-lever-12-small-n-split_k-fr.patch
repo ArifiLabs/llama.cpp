@@ -1,0 +1,168 @@
+From 92413d182243e2deaeec098a0488b1358703d409 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 10 Oct 2026 16:32:37 -0400
+Subject: [PATCH] lane-298: revert lane 302 lever 12 (small-n split_k) from
+ v0.1.3.2: it changes plain greedy text vs v0.1.3.1
+
+Reverts c8446c32d0, c1079d3153 (code + test arm) and the protected-win entry 1d346fdfd4 + its re-key 8c71293db7
+(vulkan-mm-splitk-small-n-verify removed from protected-wins.json). Resolution rows e062ff7580 stay as history.
+Conflict in protected-wins.json (lever 13 entry 5c747ded24 sits after it): kept the body 6 entry, dropped the
+split_k entry only. Code check: diff d78f1890b7..this in ggml/src/ggml-vulkan + tests has the same patch-id as
+lever 13 alone (5de60bda7e..b5899b523c), 8e28c7f7b4.
+
+Why: rg132 fn + orn BLOCKER (plain greedy chat text moved vs v0.1.3.1, deterministic per side). Untimed bisect
+rg-bis-10101451 on the b5899b523c build: GGML_ARIFI_MM_SPLITK_SMALLN=0 restores v0.1.3.1 text on both models (fn
+chat/code/json/reason, orn chat/code); IQ2S_BODY=5 alone does not. Pre-ruled HQ86 13:02 + HQ87 14:5x (Q87
+correction accepted): lever 12 fails its rule = revert. HQ87 15:2x: lane 302 builds an order-preserving exact
+split_k; it lands later as a fresh pick through its own bars.
+
+Origin: lane-298 (revert of lane-302 lever 12, HQ87 2026-10-10 14:5x ruling)
+Measured-effect: correctness only - restores v0.1.3.1 plain greedy ids on Flash-Next + Ornith 1.5 (cache/mtp-x1-lane/cells/rg-bis-10101451-state.json, BIS-READ in cache/mtp-x1-lane/progress.txt)
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 40 +---------------------------
+ tests/test-backend-ops.cpp           | 16 -----------
+ tools/arifi-sync/protected-wins.json | 25 -----------------
+ 3 files changed, 1 insertion(+), 80 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 5e00bb93bc..c63d2ff9da 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -647,27 +647,6 @@ static uint32_t moe_gather_nounroll_env() {
+     return (e != nullptr && (e[0] == '1' || e[0] == '2')) ? (uint32_t) (e[0] - '0') : 0u;
+ }
+ 
+-// lane-302 lever 12 (cell AC): verify-width MUL_MAT starves the GPU on long-K / small-M weights (hc_attn_inject 4x10240 at
+-// n < 32 = 1 workgroup; hc_down 320x10240 at n 33..64 = 5). Split default ON (cell AE served WIN); large tile opt-in.
+-// GGML_ARIFI_MM_SPLITK_SMALLN: unset/1 = split_k also when n < the tile's N; 0 = stock; 2 = planted wrong arm (test only)
+-static uint32_t mm_splitk_smalln_env() {
+-    static const uint32_t v = [] {
+-        const char * e = getenv("GGML_ARIFI_MM_SPLITK_SMALLN");
+-        if (e == nullptr || e[0] == '\0') return 1u;
+-        return (e[0] == '1' || e[0] == '2') ? (uint32_t) (e[0] - '0') : 0u;
+-    }();
+-    return v;
+-}
+-// GGML_ARIFI_MM_LARGE_MIN_N=<n0>: MUL_MAT (not _ID) takes the large tile for m > 64 and n >= n0 (n0 > 32); 0/unset = stock
+-static uint32_t mm_large_min_n_env() {
+-    static const uint32_t v = [] {
+-        const char * e = getenv("GGML_ARIFI_MM_LARGE_MIN_N");
+-        const long n0 = e != nullptr ? strtol(e, nullptr, 10) : 0;
+-        return n0 > 32 ? (uint32_t) n0 : 0u;
+-    }();
+-    return v;
+-}
+-
+ // lane-302 Route A: IQ3_S gather grid init (spec 4 of mul_mat_vec_iq3_s.comp), opt-in until measured.
+ // 1 = batched loads before stores (byte-identical by construction); 2 = planted wrong arm (test only)
+ static uint32_t moe_gather_iq3s_init_env() {
+@@ -3303,20 +3282,6 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+             return (uint32_t)configs.size() - 1;
+         };
+         device->matmul_id_tile_selector = device->matmul_tile_selector;
+-        if (mm_large_min_n_env() != 0) {
+-            // lane-302 lever 12: MUL_MAT only; the _ID selector keeps the stock copy above
+-            device->matmul_tile_selector = [stock = device->matmul_id_tile_selector](uint32_t m, uint32_t n, uint32_t k, uint32_t scc,
+-                                              const std::vector<vk_matmul_pipeline_pair>& configs) -> uint32_t {
+-                if (configs.size() >= 3 && m > 64 && n >= mm_large_min_n_env()) return (uint32_t)configs.size() - 1;
+-                return stock(m, n, k, scc, configs);
+-            };
+-        }
+-    }
+-    static bool lever12_logged = false;
+-    if (!lever12_logged) {
+-        lever12_logged = true;
+-        fprintf(stderr, "ggml_vulkan: MUL_MAT small-n split_k %u, large tile min n %u, cores %u (lane-302 lever 12: GGML_ARIFI_MM_SPLITK_SMALLN / _MM_LARGE_MIN_N)\n",
+-                mm_splitk_smalln_env(), mm_large_min_n_env(), device->shader_core_count);
+     }
+ 
+     // mul mat vec
+@@ -7701,7 +7666,7 @@ static uint32_t ggml_vk_guess_split_k(ggml_backend_vk_context * ctx, uint32_t m,
+     }
+ 
+     uint32_t split_k = 1;
+-    if (ctx->device->shader_core_count != 0 && (n >= pipeline->wg_denoms[1] || mm_splitk_smalln_env() != 0)) {
++    if (ctx->device->shader_core_count != 0 && n >= pipeline->wg_denoms[1]) {
+         // If k is 'large' and the SMs will fill less than halfway, use split_k.
+         uint32_t m_tiles = CEIL_DIV(m, pipeline->wg_denoms[0]);
+         uint32_t n_tiles = CEIL_DIV(n, pipeline->wg_denoms[1]);
+@@ -7766,9 +7731,6 @@ void ggml_vk_matmul(
+     // Round the split size up to a multiple of 256 (k-quant alignment)
+     uint32_t k_split = CEIL_DIV(k, split_k);
+     k_split = ROUNDUP_POW2(k_split, 256);
+-    if (mm_splitk_smalln_env() == 2 && n < pipeline->wg_denoms[1] && k_split > 256) {
+-        k_split -= 256; // lane-302 lever 12 planted wrong arm: the last split stops short of K
+-    }
+ 
+     ggml_pipeline_request_descriptor_sets(ctx, pipeline, CEIL_DIV(batch, ctx->device->properties.limits.maxComputeWorkGroupCount[2]));
+ 
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index 12a5711150..d7095b5898 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -12019,13 +12019,6 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+         }
+     }
+     test_cases.emplace_back(new test_mul_mat_id(GGML_TYPE_Q4_0, GGML_TYPE_F32, 32, 2, false, 2880, 32, 2880));
+-    // arifi lane-302 lever 12: qwen4exp hyper-connection bf16 weights at the ngram verify widths
+-    // (hc_attn_inject 4x10240, hc_down 320x10240, hc_up 10240x320); n straddles the 32 / 64 tile edges
+-    for (int n : {9, 16, 23, 31, 32, 33, 47, 62, 64, 65}) {
+-        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_BF16, GGML_TYPE_F32, 4, n, 10240, {1, 1}, {1, 1}));
+-        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_BF16, GGML_TYPE_F32, 320, n, 10240, {1, 1}, {1, 1}));
+-        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_BF16, GGML_TYPE_F32, 10240, n, 320, {1, 1}, {1, 1}));
+-    }
+ 
+     // multiple blocks per row: exercises the block-stride loop and the
+     // per-expert base offset, which k == 256 alone leaves untested
+@@ -13025,15 +13018,6 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
+         test_cases.emplace_back(new test_mul_mat(type, GGML_TYPE_F32, 12288, 4096, 2560, {1, 1}, {1, 1}));
+     }
+ 
+-    // arifi lane-302 lever 12: qwen4exp hc bf16 matmuls + the served dense q6_K pair at the ngram verify widths
+-    for (int n : {16, 23, 31, 33, 47, 62, 65}) {
+-        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_BF16, GGML_TYPE_F32, 4, n, 10240, {1, 1}, {1, 1}));
+-        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_BF16, GGML_TYPE_F32, 320, n, 10240, {1, 1}, {1, 1}));
+-        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_BF16, GGML_TYPE_F32, 10240, n, 320, {1, 1}, {1, 1}));
+-        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q6_K, GGML_TYPE_F32, 2560, n, 6144, {1, 1}, {1, 1}));
+-        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q6_K, GGML_TYPE_F32, 10240, n, 2560, {1, 1}, {1, 1}));
+-    }
+-
+     // lane 301 lever 4: QSA mask chain + FA at served decode/prefill shapes (fused vs GGML_ARIFI_QSA_MASKFUSE=0, RGP target)
+     test_cases.emplace_back(new test_qsa_mask_fa(8192,  1,  1, 2051));
+     test_cases.emplace_back(new test_qsa_mask_fa(32768, 1,  1, 2051));
+diff --git a/tools/arifi-sync/protected-wins.json b/tools/arifi-sync/protected-wins.json
+index 774d7779ff..1ec12e7774 100644
+--- a/tools/arifi-sync/protected-wins.json
++++ b/tools/arifi-sync/protected-wins.json
+@@ -2501,31 +2501,6 @@
+       "notes": "Lane 301 lever 1, DECISIONS D-L1 + relaunch 56 (board/programs/local-inference/lanes/2026-10-05-lane-301-DECISIONS.md). 20f86b8cc7 squashes 15bda3078f + d579bb51f6 (same tree a941b69b13; backup tag lane-301/fa-sparse-idx-pre-squash).",
+       "_registered": "2026-10-09, lane 301 relaunch 56. Re-keyed 2026-10-09 by lane 298 relaunch-107 (HQ86 20:05 pick): commit = the pick of 20f86b8cc7 onto lane-298/v0132, patch-id equal."
+     },
+-    {
+-      "id": "vulkan-mm-splitk-small-n-verify",
+-      "status": "active",
+-      "_registered": "2026-10-10, lane-302 relaunch-64 (Opus 5.5). Default ON after cell AG PASS on every HQ86 21:08 bar (ship default ON in v0.1.3.2).",
+-      "mechanism": "ggml_vk_guess_split_k only split K when n >= the tile's N, so verify-width dense MUL_MAT on long-K / small-M weights (qwen4exp hc_attn_inject 4x10240 at n < 32 = 1 workgroup; hc_down 320x10240 at n 33..64 = 5 workgroups) left the GPU almost idle. mm_splitk_smalln_env() (GGML_ARIFI_MM_SPLITK_SMALLN, unset/1 = ON) lets the stock split_k rule also run when n < tile N. Perf-logger split (cellAE amend sec 5): hc bf16 9-32|m4 -81%, 9-32|m320 -37%, 33-64|m320 -56%; n >= tile N is source-inert. Split_k reorders the fp32 K sum, so ON is not bit-exact to stock; =0 is the stock path (OFF proof: cell AG D1..D3 greedy ids == rc build-kvzb). =2/=3 are planted wrong arms (test only). GGML_ARIFI_MM_LARGE_MIN_N stays opt-in (moved nothing in cell AD).",
+-      "commit": "7b1c2a88cabccc1ed629e073a5c622721bda8cfe",
+-      "protected_paths": [
+-        "ggml/src/ggml-vulkan/ggml-vulkan.cpp"
+-      ],
+-      "anchors": [
+-        "GGML_ARIFI_MM_SPLITK_SMALLN",
+-        "mm_splitk_smalln_env",
+-        "GGML_ARIFI_MM_LARGE_MIN_N"
+-      ],
+-      "evidence": [
+-        "cache/moe-gather-x1-lane/cells/cellAG-10100145-SUMMARY.txt",
+-        "cache/moe-gather-x1-lane/cells/cellAG-10100145-state.json",
+-        "cache/moe-gather-x1-lane/cells/cellAE-10091525-read-amend.txt",
+-        "cache/moe-gather-x1-lane/cells/cellAD-10091238-read.txt"
+-      ],
+-      "quality_gate": "cell AG: TBO MUL_MAT bf16 hc shapes OFF 32/0, ON 32/0, planted P2/P3 13 FAIL; served planted RED (P3, probs + ids) fired on 5/5 wide prompts; OFF proof D1..D3 == rc on every greedy request; greedy ids S == D on every <= 8-wide request; pooled acceptance drop greedy 0.0 pp (bar 2.0), sampled 0.0 pp (bar 3.0).",
+-      "workload": "Qwen3.8-Flash-Next qwen4exp IQ3_S serve file, MTP dven40k + ngram-mod, verify widths 9..64 (hc bf16 MUL_MAT), AMD Radeon 890M (RDNA3.5), llama-server on the v0.1.3.2 rc (c21f0689d0).",
+-      "measured_effect": "Cell AG served ABBA (D1 S1 S2 D2 D3 S3), 5 wide prompts: sampled (temp 0.7, 4 seeds) pooled 46.21 -> 47.58 t/s +2.97%, greedy 35.52 -> 36.90 t/s +3.88%, all wide +3.19% (pairs +3.66/+2.74/+3.17); acceptance identical. Sensitivity with s2-short (49-wide) pooled in: +2.66%, -0.15 pp. s2-short alone -2.0%, -3.38 pp (one trajectory). Narrow (width 4) prompts tie.",
+-      "valid_conditions": "Vulkan dense MUL_MAT (not _ID), n < the tile's N, K large enough that the stock split_k rule fires; GGML_ARIFI_MM_SPLITK_SMALLN unset or 1."
+-    },
+     {
+       "id": "vulkan-moe-gather-iq2s-body6-const-grid",
+       "status": "active",

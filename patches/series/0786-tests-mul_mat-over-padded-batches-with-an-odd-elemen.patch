@@ -1,0 +1,38 @@
+From 54d66f1e3ab487f42cff92cbaee9562de8ed3f4b Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 8 Oct 2026 22:48:31 -0400
+Subject: [PATCH] tests: mul_mat over padded batches with an odd element stride
+ (F32/F16/BF16 mat-vec)
+
+Six MUL_MAT cases: a is a view whose batches are padded by exactly one element (pad = type size),
+so batch_stride_a is odd and the per-batch a_offset is odd for every odd batch. n = 1 and 2 keep
+the op on the mat-vec route, k = 64 keeps it on the aligned non-quant branch.
+
+Expected on the port tip before the fix: F16 and BF16 FAIL (the aligned branch loads a in packed
+pairs at (a_offset + ib)/2, which drops the odd element), F32 OK (its aligned loads are still scalar).
+After the fix all six OK.
+
+Taken-from: ggml-org/llama.cpp@83dd71f869 (#29254) - the PR names the missing a_offset check; the test is ours.
+Measured-effect: NO RUNTIME EFFECT - test only; RED on 0206f2bf90 = 2 of 7 padded odd-stride MUL_MAT cases FAIL (F16, BF16), GREEN on 20a1244b13 = 7/7 OK (cache/upstream-x1-lane/cells/rg8-summary.txt).
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ tests/test-backend-ops.cpp | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index ee4c40c6cf..1e404d8f6b 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -11739,6 +11739,12 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+     // the batches of a are padded, nb[2] is not a multiple of nb[1]
+     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F32, GGML_TYPE_F32, 8, 1, 64, {8, 1}, {1, 1}, {0, 1, 2, 3}, 0, 1, false, 16, 16));
+     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F16, GGML_TYPE_F32, 8, 16, 64, {8, 1}, {1, 1}, {0, 1, 2, 3}, 0, 1, false, 16, 16));
++    // one element of padding: the batch stride of a is odd, so 2-at-a-time loads of a must not be used (#29254)
++    for (ggml_type type_a : {GGML_TYPE_F32, GGML_TYPE_F16, GGML_TYPE_BF16}) {
++        for (int n : {1, 2}) {
++            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 8, n, 64, {8, 1}, {1, 1}, {0, 1, 2, 3}, 0, 1, false, 16, ggml_type_size(type_a)));
++        }
++    }
+     // as is a view whose experts are strided by more rows than it uses
+     test_cases.emplace_back(new test_mul_mat_id(GGML_TYPE_F32, GGML_TYPE_F32, 4, 2, false, 8,  1, 64, 1.0f, 64));
+     test_cases.emplace_back(new test_mul_mat_id(GGML_TYPE_F16, GGML_TYPE_F32, 4, 2, false, 8, 16, 64, 1.0f, 64));

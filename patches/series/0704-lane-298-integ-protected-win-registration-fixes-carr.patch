@@ -1,0 +1,527 @@
+From 2b3aafa26b1edb67a35bfd8e3d987aa4084f7eb5 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 11:00:18 -0400
+Subject: [PATCH] lane-298 integ: protected-win registration fixes carried in
+ from lanes 301/302 + HQ80 f2c5fad421 resolution rows
+
+protected-wins.json (validate FAIL on integ; the same defects sit on the source branches):
+- vulkan-fa-sparse-prefill-qsa, qwen4exp-qsa-pooled-indexer-cache: evidence was a string (validated per character); now a list.
+- qwen4exp-qsa-pooled-indexer-cache: anchor 'first INCREMENTAL graph' is a runtime %s format, never in source; anchor = the
+  literal log prefix 'qsa pooled cache (lane-301 row 25)' (qwen4exp.cpp:761).
+- vulkan-moe-gather-iq3s-rows2: locator cellG-10052319-read.json -> cellG-10052319/read.json (the file on disk).
+protected-win-resolutions.json: +20 rows from board/programs/local-inference/2026-10-05-protected-win-resolutions-f2c5fad421.json
+(HQ seat 80), dedup on (win_id, incoming).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Origin: ArifiLabs (native) - fork-authored (lane-298); no upstream origin exists.
+Measured-effect: UNMEASURED - no served number for this commit in the release ledger or the commit message
+---
+ .../arifi-sync/protected-win-resolutions.json | 460 ++++++++++++++++++
+ tools/arifi-sync/protected-wins.json          |   8 +-
+ 2 files changed, 464 insertions(+), 4 deletions(-)
+
+diff --git a/tools/arifi-sync/protected-win-resolutions.json b/tools/arifi-sync/protected-win-resolutions.json
+index dd62b8a7a6..d561eacc98 100644
+--- a/tools/arifi-sync/protected-win-resolutions.json
++++ b/tools/arifi-sync/protected-win-resolutions.json
+@@ -786,6 +786,466 @@
+       "decided_utc": "2026-09-27T15:30:00Z",
+       "decided_by": "lane-296 collision maker (Opus 5.5), pending HQ Sol re-check",
+       "owed": "no"
++    },
++    {
++      "win_id": "vulkan-concat-transpose-deltanet",
++      "incoming": "f2c5fad42104e56d810fb3d6fe417ec823bc47b3",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming change is a fork-internal fix (lane 300, F-141 FA dead-value signed-zero), not an upstream ingest; f2c5fad421 descends from 640334adae, so no upstream-only arm exists",
++        "ours": "c15 keep arm: same binary f2c5fad421 with GGML_VK_FA_DEADV_KEEP=1 (pre-fix FA path, protected win intact)",
++        "union": "c15 fix arm: decode TIE vs keep at verify width 1/3/4 on qwen4exp and Ornith, all CIs span 1.0; the fix hunk in ggml-vulkan.cpp is FA pipeline flags only, this win's mechanism code untouched"
++      },
++      "quality": "c11: fix 0/4 vs keep 3/4 non-deterministic runs; c12/c13 10/10 repeat GREEN; c14 dense drafted==plain all keys",
++      "evidence": [
++        "cache/determinism-x1-lane/cells/pw-check-f2c5fad421.txt",
++        "cache/determinism-x1-lane/cells/c11-10051701-state.json",
++        "cache/determinism-x1-lane/cells/c12-10051803-state.json",
++        "cache/determinism-x1-lane/cells/c13-10051909-state.json",
++        "cache/determinism-x1-lane/cells/c14-10051949-state.json",
++        "cache/determinism-x1-lane/cells/c15-10052057-state.json",
++        "board/programs/local-inference/lanes/2026-10-05-lane-300-REPORT.md",
++        "commit:f2c5fad42104e56d810fb3d6fe417ec823bc47b3"
++      ],
++      "decided_utc": "2026-10-06T01:30:00Z",
++      "decided_by": "HQ seat 80 (Opus 5.5), from lane-300 REPORT blocker table"
++    },
++    {
++      "win_id": "vulkan-tq-matvec-subgroup",
++      "incoming": "f2c5fad42104e56d810fb3d6fe417ec823bc47b3",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming change is a fork-internal fix (lane 300, F-141 FA dead-value signed-zero), not an upstream ingest; f2c5fad421 descends from 640334adae, so no upstream-only arm exists",
++        "ours": "c15 keep arm: same binary f2c5fad421 with GGML_VK_FA_DEADV_KEEP=1 (pre-fix FA path, protected win intact)",
++        "union": "c15 fix arm: decode TIE vs keep at verify width 1/3/4 on qwen4exp and Ornith, all CIs span 1.0; the fix hunk in ggml-vulkan.cpp is FA pipeline flags only, this win's mechanism code untouched"
++      },
++      "quality": "c11: fix 0/4 vs keep 3/4 non-deterministic runs; c12/c13 10/10 repeat GREEN; c14 dense drafted==plain all keys",
++      "evidence": [
++        "cache/determinism-x1-lane/cells/pw-check-f2c5fad421.txt",
++        "cache/determinism-x1-lane/cells/c11-10051701-state.json",
++        "cache/determinism-x1-lane/cells/c12-10051803-state.json",
++        "cache/determinism-x1-lane/cells/c13-10051909-state.json",
++        "cache/determinism-x1-lane/cells/c14-10051949-state.json",
++        "cache/determinism-x1-lane/cells/c15-10052057-state.json",
++        "board/programs/local-inference/lanes/2026-10-05-lane-300-REPORT.md",
++        "commit:f2c5fad42104e56d810fb3d6fe417ec823bc47b3"
++      ],
++      "decided_utc": "2026-10-06T01:30:00Z",
++      "decided_by": "HQ seat 80 (Opus 5.5), from lane-300 REPORT blocker table"
++    },
++    {
++      "win_id": "vulkan-escha-mm-column-block",
++      "incoming": "f2c5fad42104e56d810fb3d6fe417ec823bc47b3",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming change is a fork-internal fix (lane 300, F-141 FA dead-value signed-zero), not an upstream ingest; f2c5fad421 descends from 640334adae, so no upstream-only arm exists",
++        "ours": "c15 keep arm: same binary f2c5fad421 with GGML_VK_FA_DEADV_KEEP=1 (pre-fix FA path, protected win intact)",
++        "union": "c15 fix arm: decode TIE vs keep at verify width 1/3/4 on qwen4exp and Ornith, all CIs span 1.0; the fix hunk in ggml-vulkan.cpp is FA pipeline flags only, this win's mechanism code untouched"
++      },
++      "quality": "c11: fix 0/4 vs keep 3/4 non-deterministic runs; c12/c13 10/10 repeat GREEN; c14 dense drafted==plain all keys",
++      "evidence": [
++        "cache/determinism-x1-lane/cells/pw-check-f2c5fad421.txt",
++        "cache/determinism-x1-lane/cells/c11-10051701-state.json",
++        "cache/determinism-x1-lane/cells/c12-10051803-state.json",
++        "cache/determinism-x1-lane/cells/c13-10051909-state.json",
++        "cache/determinism-x1-lane/cells/c14-10051949-state.json",
++        "cache/determinism-x1-lane/cells/c15-10052057-state.json",
++        "board/programs/local-inference/lanes/2026-10-05-lane-300-REPORT.md",
++        "commit:f2c5fad42104e56d810fb3d6fe417ec823bc47b3"
++      ],
++      "decided_utc": "2026-10-06T01:30:00Z",
++      "decided_by": "HQ seat 80 (Opus 5.5), from lane-300 REPORT blocker table"
++    },
++    {
++      "win_id": "vulkan-rocmfp4-fast-q8_1-mmvq",
++      "incoming": "f2c5fad42104e56d810fb3d6fe417ec823bc47b3",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming change is a fork-internal fix (lane 300, F-141 FA dead-value signed-zero), not an upstream ingest; f2c5fad421 descends from 640334adae, so no upstream-only arm exists",
++        "ours": "c15 keep arm: same binary f2c5fad421 with GGML_VK_FA_DEADV_KEEP=1 (pre-fix FA path, protected win intact)",
++        "union": "c15 fix arm: decode TIE vs keep at verify width 1/3/4 on qwen4exp and Ornith, all CIs span 1.0; the fix hunk in ggml-vulkan.cpp is FA pipeline flags only, this win's mechanism code untouched"
++      },
++      "quality": "c11: fix 0/4 vs keep 3/4 non-deterministic runs; c12/c13 10/10 repeat GREEN; c14 dense drafted==plain all keys",
++      "evidence": [
++        "cache/determinism-x1-lane/cells/pw-check-f2c5fad421.txt",
++        "cache/determinism-x1-lane/cells/c11-10051701-state.json",
++        "cache/determinism-x1-lane/cells/c12-10051803-state.json",
++        "cache/determinism-x1-lane/cells/c13-10051909-state.json",
++        "cache/determinism-x1-lane/cells/c14-10051949-state.json",
++        "cache/determinism-x1-lane/cells/c15-10052057-state.json",
++        "board/programs/local-inference/lanes/2026-10-05-lane-300-REPORT.md",
++        "commit:f2c5fad42104e56d810fb3d6fe417ec823bc47b3"
++      ],
++      "decided_utc": "2026-10-06T01:30:00Z",
++      "decided_by": "HQ seat 80 (Opus 5.5), from lane-300 REPORT blocker table"
++    },
++    {
++      "win_id": "vulkan-fa-dequant-kv-runtime-gate",
++      "incoming": "f2c5fad42104e56d810fb3d6fe417ec823bc47b3",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming change is a fork-internal fix (lane 300, F-141 FA dead-value signed-zero), not an upstream ingest; f2c5fad421 descends from 640334adae, so no upstream-only arm exists",
++        "ours": "c15 keep arm: same binary f2c5fad421 with GGML_VK_FA_DEADV_KEEP=1 (pre-fix FA path, protected win intact)",
++        "union": "c15 fix arm: decode TIE vs keep at verify width 1/3/4 on qwen4exp and Ornith, all CIs span 1.0; the fix hunk in ggml-vulkan.cpp is FA pipeline flags only, this win's mechanism code untouched"
++      },
++      "quality": "c11: fix 0/4 vs keep 3/4 non-deterministic runs; c12/c13 10/10 repeat GREEN; c14 dense drafted==plain all keys",
++      "evidence": [
++        "cache/determinism-x1-lane/cells/pw-check-f2c5fad421.txt",
++        "cache/determinism-x1-lane/cells/c11-10051701-state.json",
++        "cache/determinism-x1-lane/cells/c12-10051803-state.json",
++        "cache/determinism-x1-lane/cells/c13-10051909-state.json",
++        "cache/determinism-x1-lane/cells/c14-10051949-state.json",
++        "cache/determinism-x1-lane/cells/c15-10052057-state.json",
++        "board/programs/local-inference/lanes/2026-10-05-lane-300-REPORT.md",
++        "commit:f2c5fad42104e56d810fb3d6fe417ec823bc47b3"
++      ],
++      "decided_utc": "2026-10-06T01:30:00Z",
++      "decided_by": "HQ seat 80 (Opus 5.5), from lane-300 REPORT blocker table"
++    },
++    {
++      "win_id": "vulkan-rdna3-mmv-id-rows-switch",
++      "incoming": "f2c5fad42104e56d810fb3d6fe417ec823bc47b3",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming change is a fork-internal fix (lane 300, F-141 FA dead-value signed-zero), not an upstream ingest; f2c5fad421 descends from 640334adae, so no upstream-only arm exists",
++        "ours": "c15 keep arm: same binary f2c5fad421 with GGML_VK_FA_DEADV_KEEP=1 (pre-fix FA path, protected win intact)",
++        "union": "c15 fix arm: decode TIE vs keep at verify width 1/3/4 on qwen4exp and Ornith, all CIs span 1.0; the fix hunk in ggml-vulkan.cpp is FA pipeline flags only, this win's mechanism code untouched"
++      },
++      "quality": "c11: fix 0/4 vs keep 3/4 non-deterministic runs; c12/c13 10/10 repeat GREEN; c14 dense drafted==plain all keys",
++      "evidence": [
++        "cache/determinism-x1-lane/cells/pw-check-f2c5fad421.txt",
++        "cache/determinism-x1-lane/cells/c11-10051701-state.json",
++        "cache/determinism-x1-lane/cells/c12-10051803-state.json",
++        "cache/determinism-x1-lane/cells/c13-10051909-state.json",
++        "cache/determinism-x1-lane/cells/c14-10051949-state.json",
++        "cache/determinism-x1-lane/cells/c15-10052057-state.json",
++        "board/programs/local-inference/lanes/2026-10-05-lane-300-REPORT.md",
++        "commit:f2c5fad42104e56d810fb3d6fe417ec823bc47b3"
++      ],
++      "decided_utc": "2026-10-06T01:30:00Z",
++      "decided_by": "HQ seat 80 (Opus 5.5), from lane-300 REPORT blocker table"
++    },
++    {
++      "win_id": "vulkan-mul-mat-id-staging-receipt-hazard-assert",
++      "incoming": "f2c5fad42104e56d810fb3d6fe417ec823bc47b3",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming change is a fork-internal fix (lane 300, F-141 FA dead-value signed-zero), not an upstream ingest; f2c5fad421 descends from 640334adae, so no upstream-only arm exists",
++        "ours": "c15 keep arm: same binary f2c5fad421 with GGML_VK_FA_DEADV_KEEP=1 (pre-fix FA path, protected win intact)",
++        "union": "c15 fix arm: decode TIE vs keep at verify width 1/3/4 on qwen4exp and Ornith, all CIs span 1.0; the fix hunk in ggml-vulkan.cpp is FA pipeline flags only, this win's mechanism code untouched"
++      },
++      "quality": "c11: fix 0/4 vs keep 3/4 non-deterministic runs; c12/c13 10/10 repeat GREEN; c14 dense drafted==plain all keys",
++      "evidence": [
++        "cache/determinism-x1-lane/cells/pw-check-f2c5fad421.txt",
++        "cache/determinism-x1-lane/cells/c11-10051701-state.json",
++        "cache/determinism-x1-lane/cells/c12-10051803-state.json",
++        "cache/determinism-x1-lane/cells/c13-10051909-state.json",
++        "cache/determinism-x1-lane/cells/c14-10051949-state.json",
++        "cache/determinism-x1-lane/cells/c15-10052057-state.json",
++        "board/programs/local-inference/lanes/2026-10-05-lane-300-REPORT.md",
++        "commit:f2c5fad42104e56d810fb3d6fe417ec823bc47b3"
++      ],
++      "decided_utc": "2026-10-06T01:30:00Z",
++      "decided_by": "HQ seat 80 (Opus 5.5), from lane-300 REPORT blocker table"
++    },
++    {
++      "win_id": "vulkan-uma-read-path-probe",
++      "incoming": "f2c5fad42104e56d810fb3d6fe417ec823bc47b3",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming change is a fork-internal fix (lane 300, F-141 FA dead-value signed-zero), not an upstream ingest; f2c5fad421 descends from 640334adae, so no upstream-only arm exists",
++        "ours": "c15 keep arm: same binary f2c5fad421 with GGML_VK_FA_DEADV_KEEP=1 (pre-fix FA path, protected win intact)",
++        "union": "c15 fix arm: decode TIE vs keep at verify width 1/3/4 on qwen4exp and Ornith, all CIs span 1.0; the fix hunk in ggml-vulkan.cpp is FA pipeline flags only, this win's mechanism code untouched"
++      },
++      "quality": "c11: fix 0/4 vs keep 3/4 non-deterministic runs; c12/c13 10/10 repeat GREEN; c14 dense drafted==plain all keys",
++      "evidence": [
++        "cache/determinism-x1-lane/cells/pw-check-f2c5fad421.txt",
++        "cache/determinism-x1-lane/cells/c11-10051701-state.json",
++        "cache/determinism-x1-lane/cells/c12-10051803-state.json",
++        "cache/determinism-x1-lane/cells/c13-10051909-state.json",
++        "cache/determinism-x1-lane/cells/c14-10051949-state.json",
++        "cache/determinism-x1-lane/cells/c15-10052057-state.json",
++        "board/programs/local-inference/lanes/2026-10-05-lane-300-REPORT.md",
++        "commit:f2c5fad42104e56d810fb3d6fe417ec823bc47b3"
++      ],
++      "decided_utc": "2026-10-06T01:30:00Z",
++      "decided_by": "HQ seat 80 (Opus 5.5), from lane-300 REPORT blocker table"
++    },
++    {
++      "win_id": "vulkan-q5k-matvec-b-hoist-width-gate",
++      "incoming": "f2c5fad42104e56d810fb3d6fe417ec823bc47b3",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming change is a fork-internal fix (lane 300, F-141 FA dead-value signed-zero), not an upstream ingest; f2c5fad421 descends from 640334adae, so no upstream-only arm exists",
++        "ours": "c15 keep arm: same binary f2c5fad421 with GGML_VK_FA_DEADV_KEEP=1 (pre-fix FA path, protected win intact)",
++        "union": "c15 fix arm: decode TIE vs keep at verify width 1/3/4 on qwen4exp and Ornith, all CIs span 1.0; the fix hunk in ggml-vulkan.cpp is FA pipeline flags only, this win's mechanism code untouched"
++      },
++      "quality": "c11: fix 0/4 vs keep 3/4 non-deterministic runs; c12/c13 10/10 repeat GREEN; c14 dense drafted==plain all keys",
++      "evidence": [
++        "cache/determinism-x1-lane/cells/pw-check-f2c5fad421.txt",
++        "cache/determinism-x1-lane/cells/c11-10051701-state.json",
++        "cache/determinism-x1-lane/cells/c12-10051803-state.json",
++        "cache/determinism-x1-lane/cells/c13-10051909-state.json",
++        "cache/determinism-x1-lane/cells/c14-10051949-state.json",
++        "cache/determinism-x1-lane/cells/c15-10052057-state.json",
++        "board/programs/local-inference/lanes/2026-10-05-lane-300-REPORT.md",
++        "commit:f2c5fad42104e56d810fb3d6fe417ec823bc47b3"
++      ],
++      "decided_utc": "2026-10-06T01:30:00Z",
++      "decided_by": "HQ seat 80 (Opus 5.5), from lane-300 REPORT blocker table"
++    },
++    {
++      "win_id": "vulkan-mmvq-a-hoist-r48b-route",
++      "incoming": "f2c5fad42104e56d810fb3d6fe417ec823bc47b3",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming change is a fork-internal fix (lane 300, F-141 FA dead-value signed-zero), not an upstream ingest; f2c5fad421 descends from 640334adae, so no upstream-only arm exists",
++        "ours": "c15 keep arm: same binary f2c5fad421 with GGML_VK_FA_DEADV_KEEP=1 (pre-fix FA path, protected win intact)",
++        "union": "c15 fix arm: decode TIE vs keep at verify width 1/3/4 on qwen4exp and Ornith, all CIs span 1.0; the fix hunk in ggml-vulkan.cpp is FA pipeline flags only, this win's mechanism code untouched"
++      },
++      "quality": "c11: fix 0/4 vs keep 3/4 non-deterministic runs; c12/c13 10/10 repeat GREEN; c14 dense drafted==plain all keys",
++      "evidence": [
++        "cache/determinism-x1-lane/cells/pw-check-f2c5fad421.txt",
++        "cache/determinism-x1-lane/cells/c11-10051701-state.json",
++        "cache/determinism-x1-lane/cells/c12-10051803-state.json",
++        "cache/determinism-x1-lane/cells/c13-10051909-state.json",
++        "cache/determinism-x1-lane/cells/c14-10051949-state.json",
++        "cache/determinism-x1-lane/cells/c15-10052057-state.json",
++        "board/programs/local-inference/lanes/2026-10-05-lane-300-REPORT.md",
++        "commit:f2c5fad42104e56d810fb3d6fe417ec823bc47b3"
++      ],
++      "decided_utc": "2026-10-06T01:30:00Z",
++      "decided_by": "HQ seat 80 (Opus 5.5), from lane-300 REPORT blocker table"
++    },
++    {
++      "win_id": "vulkan-sx8-mulmm-packed-decode-and-mmq-under-coopmat",
++      "incoming": "f2c5fad42104e56d810fb3d6fe417ec823bc47b3",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming change is a fork-internal fix (lane 300, F-141 FA dead-value signed-zero), not an upstream ingest; f2c5fad421 descends from 640334adae, so no upstream-only arm exists",
++        "ours": "c15 keep arm: same binary f2c5fad421 with GGML_VK_FA_DEADV_KEEP=1 (pre-fix FA path, protected win intact)",
++        "union": "c15 fix arm: decode TIE vs keep at verify width 1/3/4 on qwen4exp and Ornith, all CIs span 1.0; the fix hunk in ggml-vulkan.cpp is FA pipeline flags only, this win's mechanism code untouched"
++      },
++      "quality": "c11: fix 0/4 vs keep 3/4 non-deterministic runs; c12/c13 10/10 repeat GREEN; c14 dense drafted==plain all keys",
++      "evidence": [
++        "cache/determinism-x1-lane/cells/pw-check-f2c5fad421.txt",
++        "cache/determinism-x1-lane/cells/c11-10051701-state.json",
++        "cache/determinism-x1-lane/cells/c12-10051803-state.json",
++        "cache/determinism-x1-lane/cells/c13-10051909-state.json",
++        "cache/determinism-x1-lane/cells/c14-10051949-state.json",
++        "cache/determinism-x1-lane/cells/c15-10052057-state.json",
++        "board/programs/local-inference/lanes/2026-10-05-lane-300-REPORT.md",
++        "commit:f2c5fad42104e56d810fb3d6fe417ec823bc47b3"
++      ],
++      "decided_utc": "2026-10-06T01:30:00Z",
++      "decided_by": "HQ seat 80 (Opus 5.5), from lane-300 REPORT blocker table"
++    },
++    {
++      "win_id": "vulkan-mmv-admit-width-switch",
++      "incoming": "f2c5fad42104e56d810fb3d6fe417ec823bc47b3",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming change is a fork-internal fix (lane 300, F-141 FA dead-value signed-zero), not an upstream ingest; f2c5fad421 descends from 640334adae, so no upstream-only arm exists",
++        "ours": "c15 keep arm: same binary f2c5fad421 with GGML_VK_FA_DEADV_KEEP=1 (pre-fix FA path, protected win intact)",
++        "union": "c15 fix arm: decode TIE vs keep at verify width 1/3/4 on qwen4exp and Ornith, all CIs span 1.0; the fix hunk in ggml-vulkan.cpp is FA pipeline flags only, this win's mechanism code untouched"
++      },
++      "quality": "c11: fix 0/4 vs keep 3/4 non-deterministic runs; c12/c13 10/10 repeat GREEN; c14 dense drafted==plain all keys",
++      "evidence": [
++        "cache/determinism-x1-lane/cells/pw-check-f2c5fad421.txt",
++        "cache/determinism-x1-lane/cells/c11-10051701-state.json",
++        "cache/determinism-x1-lane/cells/c12-10051803-state.json",
++        "cache/determinism-x1-lane/cells/c13-10051909-state.json",
++        "cache/determinism-x1-lane/cells/c14-10051949-state.json",
++        "cache/determinism-x1-lane/cells/c15-10052057-state.json",
++        "board/programs/local-inference/lanes/2026-10-05-lane-300-REPORT.md",
++        "commit:f2c5fad42104e56d810fb3d6fe417ec823bc47b3"
++      ],
++      "decided_utc": "2026-10-06T01:30:00Z",
++      "decided_by": "HQ seat 80 (Opus 5.5), from lane-300 REPORT blocker table"
++    },
++    {
++      "win_id": "vulkan-mmvq-wide-rows-switch",
++      "incoming": "f2c5fad42104e56d810fb3d6fe417ec823bc47b3",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming change is a fork-internal fix (lane 300, F-141 FA dead-value signed-zero), not an upstream ingest; f2c5fad421 descends from 640334adae, so no upstream-only arm exists",
++        "ours": "c15 keep arm: same binary f2c5fad421 with GGML_VK_FA_DEADV_KEEP=1 (pre-fix FA path, protected win intact)",
++        "union": "c15 fix arm: decode TIE vs keep at verify width 1/3/4 on qwen4exp and Ornith, all CIs span 1.0; the fix hunk in ggml-vulkan.cpp is FA pipeline flags only, this win's mechanism code untouched"
++      },
++      "quality": "c11: fix 0/4 vs keep 3/4 non-deterministic runs; c12/c13 10/10 repeat GREEN; c14 dense drafted==plain all keys",
++      "evidence": [
++        "cache/determinism-x1-lane/cells/pw-check-f2c5fad421.txt",
++        "cache/determinism-x1-lane/cells/c11-10051701-state.json",
++        "cache/determinism-x1-lane/cells/c12-10051803-state.json",
++        "cache/determinism-x1-lane/cells/c13-10051909-state.json",
++        "cache/determinism-x1-lane/cells/c14-10051949-state.json",
++        "cache/determinism-x1-lane/cells/c15-10052057-state.json",
++        "board/programs/local-inference/lanes/2026-10-05-lane-300-REPORT.md",
++        "commit:f2c5fad42104e56d810fb3d6fe417ec823bc47b3"
++      ],
++      "decided_utc": "2026-10-06T01:30:00Z",
++      "decided_by": "HQ seat 80 (Opus 5.5), from lane-300 REPORT blocker table"
++    },
++    {
++      "win_id": "vulkan-q5k-mmvq-route-n5-8",
++      "incoming": "f2c5fad42104e56d810fb3d6fe417ec823bc47b3",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming change is a fork-internal fix (lane 300, F-141 FA dead-value signed-zero), not an upstream ingest; f2c5fad421 descends from 640334adae, so no upstream-only arm exists",
++        "ours": "c15 keep arm: same binary f2c5fad421 with GGML_VK_FA_DEADV_KEEP=1 (pre-fix FA path, protected win intact)",
++        "union": "c15 fix arm: decode TIE vs keep at verify width 1/3/4 on qwen4exp and Ornith, all CIs span 1.0; the fix hunk in ggml-vulkan.cpp is FA pipeline flags only, this win's mechanism code untouched"
++      },
++      "quality": "c11: fix 0/4 vs keep 3/4 non-deterministic runs; c12/c13 10/10 repeat GREEN; c14 dense drafted==plain all keys",
++      "evidence": [
++        "cache/determinism-x1-lane/cells/pw-check-f2c5fad421.txt",
++        "cache/determinism-x1-lane/cells/c11-10051701-state.json",
++        "cache/determinism-x1-lane/cells/c12-10051803-state.json",
++        "cache/determinism-x1-lane/cells/c13-10051909-state.json",
++        "cache/determinism-x1-lane/cells/c14-10051949-state.json",
++        "cache/determinism-x1-lane/cells/c15-10052057-state.json",
++        "board/programs/local-inference/lanes/2026-10-05-lane-300-REPORT.md",
++        "commit:f2c5fad42104e56d810fb3d6fe417ec823bc47b3"
++      ],
++      "decided_utc": "2026-10-06T01:30:00Z",
++      "decided_by": "HQ seat 80 (Opus 5.5), from lane-300 REPORT blocker table"
++    },
++    {
++      "win_id": "vulkan-iq3-matvec-sign-hoist-n7-rows",
++      "incoming": "f2c5fad42104e56d810fb3d6fe417ec823bc47b3",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming change is a fork-internal fix (lane 300, F-141 FA dead-value signed-zero), not an upstream ingest; f2c5fad421 descends from 640334adae, so no upstream-only arm exists",
++        "ours": "c15 keep arm: same binary f2c5fad421 with GGML_VK_FA_DEADV_KEEP=1 (pre-fix FA path, protected win intact)",
++        "union": "c15 fix arm: decode TIE vs keep at verify width 1/3/4 on qwen4exp and Ornith, all CIs span 1.0; the fix hunk in ggml-vulkan.cpp is FA pipeline flags only, this win's mechanism code untouched"
++      },
++      "quality": "c11: fix 0/4 vs keep 3/4 non-deterministic runs; c12/c13 10/10 repeat GREEN; c14 dense drafted==plain all keys",
++      "evidence": [
++        "cache/determinism-x1-lane/cells/pw-check-f2c5fad421.txt",
++        "cache/determinism-x1-lane/cells/c11-10051701-state.json",
++        "cache/determinism-x1-lane/cells/c12-10051803-state.json",
++        "cache/determinism-x1-lane/cells/c13-10051909-state.json",
++        "cache/determinism-x1-lane/cells/c14-10051949-state.json",
++        "cache/determinism-x1-lane/cells/c15-10052057-state.json",
++        "board/programs/local-inference/lanes/2026-10-05-lane-300-REPORT.md",
++        "commit:f2c5fad42104e56d810fb3d6fe417ec823bc47b3"
++      ],
++      "decided_utc": "2026-10-06T01:30:00Z",
++      "decided_by": "HQ seat 80 (Opus 5.5), from lane-300 REPORT blocker table"
++    },
++    {
++      "win_id": "vulkan-q6k-mmvq-route-n7-8",
++      "incoming": "f2c5fad42104e56d810fb3d6fe417ec823bc47b3",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming change is a fork-internal fix (lane 300, F-141 FA dead-value signed-zero), not an upstream ingest; f2c5fad421 descends from 640334adae, so no upstream-only arm exists",
++        "ours": "c15 keep arm: same binary f2c5fad421 with GGML_VK_FA_DEADV_KEEP=1 (pre-fix FA path, protected win intact)",
++        "union": "c15 fix arm: decode TIE vs keep at verify width 1/3/4 on qwen4exp and Ornith, all CIs span 1.0; the fix hunk in ggml-vulkan.cpp is FA pipeline flags only, this win's mechanism code untouched"
++      },
++      "quality": "c11: fix 0/4 vs keep 3/4 non-deterministic runs; c12/c13 10/10 repeat GREEN; c14 dense drafted==plain all keys",
++      "evidence": [
++        "cache/determinism-x1-lane/cells/pw-check-f2c5fad421.txt",
++        "cache/determinism-x1-lane/cells/c11-10051701-state.json",
++        "cache/determinism-x1-lane/cells/c12-10051803-state.json",
++        "cache/determinism-x1-lane/cells/c13-10051909-state.json",
++        "cache/determinism-x1-lane/cells/c14-10051949-state.json",
++        "cache/determinism-x1-lane/cells/c15-10052057-state.json",
++        "board/programs/local-inference/lanes/2026-10-05-lane-300-REPORT.md",
++        "commit:f2c5fad42104e56d810fb3d6fe417ec823bc47b3"
++      ],
++      "decided_utc": "2026-10-06T01:30:00Z",
++      "decided_by": "HQ seat 80 (Opus 5.5), from lane-300 REPORT blocker table"
++    },
++    {
++      "win_id": "vulkan-q4k-mmvq-w5-column-split",
++      "incoming": "f2c5fad42104e56d810fb3d6fe417ec823bc47b3",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming change is a fork-internal fix (lane 300, F-141 FA dead-value signed-zero), not an upstream ingest; f2c5fad421 descends from 640334adae, so no upstream-only arm exists",
++        "ours": "c15 keep arm: same binary f2c5fad421 with GGML_VK_FA_DEADV_KEEP=1 (pre-fix FA path, protected win intact)",
++        "union": "c15 fix arm: decode TIE vs keep at verify width 1/3/4 on qwen4exp and Ornith, all CIs span 1.0; the fix hunk in ggml-vulkan.cpp is FA pipeline flags only, this win's mechanism code untouched"
++      },
++      "quality": "c11: fix 0/4 vs keep 3/4 non-deterministic runs; c12/c13 10/10 repeat GREEN; c14 dense drafted==plain all keys",
++      "evidence": [
++        "cache/determinism-x1-lane/cells/pw-check-f2c5fad421.txt",
++        "cache/determinism-x1-lane/cells/c11-10051701-state.json",
++        "cache/determinism-x1-lane/cells/c12-10051803-state.json",
++        "cache/determinism-x1-lane/cells/c13-10051909-state.json",
++        "cache/determinism-x1-lane/cells/c14-10051949-state.json",
++        "cache/determinism-x1-lane/cells/c15-10052057-state.json",
++        "board/programs/local-inference/lanes/2026-10-05-lane-300-REPORT.md",
++        "commit:f2c5fad42104e56d810fb3d6fe417ec823bc47b3"
++      ],
++      "decided_utc": "2026-10-06T01:30:00Z",
++      "decided_by": "HQ seat 80 (Opus 5.5), from lane-300 REPORT blocker table"
++    },
++    {
++      "win_id": "vulkan-iq3s-matvec-n6-rows2",
++      "incoming": "f2c5fad42104e56d810fb3d6fe417ec823bc47b3",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming change is a fork-internal fix (lane 300, F-141 FA dead-value signed-zero), not an upstream ingest; f2c5fad421 descends from 640334adae, so no upstream-only arm exists",
++        "ours": "c15 keep arm: same binary f2c5fad421 with GGML_VK_FA_DEADV_KEEP=1 (pre-fix FA path, protected win intact)",
++        "union": "c15 fix arm: decode TIE vs keep at verify width 1/3/4 on qwen4exp and Ornith, all CIs span 1.0; the fix hunk in ggml-vulkan.cpp is FA pipeline flags only, this win's mechanism code untouched"
++      },
++      "quality": "c11: fix 0/4 vs keep 3/4 non-deterministic runs; c12/c13 10/10 repeat GREEN; c14 dense drafted==plain all keys",
++      "evidence": [
++        "cache/determinism-x1-lane/cells/pw-check-f2c5fad421.txt",
++        "cache/determinism-x1-lane/cells/c11-10051701-state.json",
++        "cache/determinism-x1-lane/cells/c12-10051803-state.json",
++        "cache/determinism-x1-lane/cells/c13-10051909-state.json",
++        "cache/determinism-x1-lane/cells/c14-10051949-state.json",
++        "cache/determinism-x1-lane/cells/c15-10052057-state.json",
++        "board/programs/local-inference/lanes/2026-10-05-lane-300-REPORT.md",
++        "commit:f2c5fad42104e56d810fb3d6fe417ec823bc47b3"
++      ],
++      "decided_utc": "2026-10-06T01:30:00Z",
++      "decided_by": "HQ seat 80 (Opus 5.5), from lane-300 REPORT blocker table"
++    },
++    {
++      "win_id": "vulkan-iq4xs-q8_1-mmvq-admit-table",
++      "incoming": "f2c5fad42104e56d810fb3d6fe417ec823bc47b3",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming change is a fork-internal fix (lane 300, F-141 FA dead-value signed-zero), not an upstream ingest; f2c5fad421 descends from 640334adae, so no upstream-only arm exists",
++        "ours": "c15 keep arm: same binary f2c5fad421 with GGML_VK_FA_DEADV_KEEP=1 (pre-fix FA path, protected win intact)",
++        "union": "c15 fix arm: decode TIE vs keep at verify width 1/3/4 on qwen4exp and Ornith, all CIs span 1.0; the fix hunk in ggml-vulkan.cpp is FA pipeline flags only, this win's mechanism code untouched"
++      },
++      "quality": "c11: fix 0/4 vs keep 3/4 non-deterministic runs; c12/c13 10/10 repeat GREEN; c14 dense drafted==plain all keys",
++      "evidence": [
++        "cache/determinism-x1-lane/cells/pw-check-f2c5fad421.txt",
++        "cache/determinism-x1-lane/cells/c11-10051701-state.json",
++        "cache/determinism-x1-lane/cells/c12-10051803-state.json",
++        "cache/determinism-x1-lane/cells/c13-10051909-state.json",
++        "cache/determinism-x1-lane/cells/c14-10051949-state.json",
++        "cache/determinism-x1-lane/cells/c15-10052057-state.json",
++        "board/programs/local-inference/lanes/2026-10-05-lane-300-REPORT.md",
++        "commit:f2c5fad42104e56d810fb3d6fe417ec823bc47b3"
++      ],
++      "decided_utc": "2026-10-06T01:30:00Z",
++      "decided_by": "HQ seat 80 (Opus 5.5), from lane-300 REPORT blocker table"
++    },
++    {
++      "win_id": "vulkan-cm1-width-rule-f16b-guard",
++      "incoming": "f2c5fad42104e56d810fb3d6fe417ec823bc47b3",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming change is a fork-internal fix (lane 300, F-141 FA dead-value signed-zero), not an upstream ingest; f2c5fad421 descends from 640334adae, so no upstream-only arm exists",
++        "ours": "c15 keep arm: same binary f2c5fad421 with GGML_VK_FA_DEADV_KEEP=1 (pre-fix FA path, protected win intact)",
++        "union": "c15 fix arm: decode TIE vs keep at verify width 1/3/4 on qwen4exp and Ornith, all CIs span 1.0; the fix hunk in ggml-vulkan.cpp is FA pipeline flags only, this win's mechanism code untouched"
++      },
++      "quality": "c11: fix 0/4 vs keep 3/4 non-deterministic runs; c12/c13 10/10 repeat GREEN; c14 dense drafted==plain all keys",
++      "evidence": [
++        "cache/determinism-x1-lane/cells/pw-check-f2c5fad421.txt",
++        "cache/determinism-x1-lane/cells/c11-10051701-state.json",
++        "cache/determinism-x1-lane/cells/c12-10051803-state.json",
++        "cache/determinism-x1-lane/cells/c13-10051909-state.json",
++        "cache/determinism-x1-lane/cells/c14-10051949-state.json",
++        "cache/determinism-x1-lane/cells/c15-10052057-state.json",
++        "board/programs/local-inference/lanes/2026-10-05-lane-300-REPORT.md",
++        "commit:f2c5fad42104e56d810fb3d6fe417ec823bc47b3"
++      ],
++      "decided_utc": "2026-10-06T01:30:00Z",
++      "decided_by": "HQ seat 80 (Opus 5.5), from lane-300 REPORT blocker table"
+     }
+   ]
+ }
+diff --git a/tools/arifi-sync/protected-wins.json b/tools/arifi-sync/protected-wins.json
+index 34e63f0197..35e6030069 100644
+--- a/tools/arifi-sync/protected-wins.json
++++ b/tools/arifi-sync/protected-wins.json
+@@ -1773,7 +1773,7 @@
+         "GGML_ARIFI_FA_SPARSE_PREFILL",
+         "FA sparse prefill engaged"
+       ],
+-      "evidence": "cache/qsa-x1-lane/cells/c3-10051215-state.json",
++      "evidence": ["cache/qsa-x1-lane/cells/c3-10051215-state.json"],
+       "quality_gate": "test-backend-ops FLASH_ATTN_EXT n_kv_max cases 21/21 on bin-b and bin-c, incl. 6 new prefill-shaped (nb>1) sparse cases; RED plant (GGML_ARIFI_QSA_RED_PLANT=1) fails exactly the 9 prefill-shaped cases (c1-10051048). Greedy 128 ids identical to bin-a at 2K/8K/16K/32K in both rounds (c3-10051215; bin-a itself differed once at 16K r2 = run noise).",
+       "workload": "Qwen3.8-Flash-Next GSQ-RCO IQ3_S (ISTA-DASLab), llama-server -ub 4096 -b 4096 -c 33792 -fa on -lm dio, F16 KV, 780M Vulkan; prompts 2K/8K/16K/32K tokens, n_predict 128, interleaved A/B/C x2 rounds logger off (c3-10051215, 32K arms in their own timed batch).",
+       "measured_effect": "Prefill tok/s bin-a -> bin-b mean of 2 rounds: 2K 214.8 -> 214.8 (0%), 8K 214.9 -> 215.7 (+0.4%), 16K 156.9 -> 205.7 (+31%), 32K 105.8 -> 194.1 (+83%). 32K/2K ratio 0.49 -> 0.90 (Strata-flat target 0.85 met). Decode 16K 9.07 -> 9.40 tok/s (+3.6%), 32K 8.30 -> 8.31 (flat). Prefill FA per 4096 ubatch at KV 32768: 38.8 s dense -> 3.7 s sparse (logger, c1-10051048).",
+@@ -1794,9 +1794,9 @@
+       "anchors": [
+         "GGML_ARIFI_QSA_POOL_CACHE",
+         "GGML_ARIFI_QSA_POOL_RED",
+-        "first INCREMENTAL graph"
++        "qsa pooled cache (lane-301 row 25)"
+       ],
+-      "evidence": "cache/qsa-x1-lane/cells/c4-10051443-state.json",
++      "evidence": ["cache/qsa-x1-lane/cells/c4-10051443-state.json"],
+       "quality_gate": "Greedy 128 ids identical bin-b vs bin-d at 2K/8K/16K/32K in both rounds (16/16 runs, one hash per length). RED plant GGML_ARIFI_QSA_POOL_RED=2 changes the greedy ids at 8K and 32K (c4-10051443-red2). Engagement checked: server log 'first INCREMENTAL graph ... incr_ok=1' (c4-10051443-d-smoke).",
+       "workload": "Qwen3.8-Flash-Next GSQ-RCO IQ3_S (ISTA-DASLab), llama-server -ub 4096 -b 4096 -c 33792 -fa on -lm dio, F16 KV, Radeon 890M Vulkan (Minisforum AI X1 Pro-470); prompts 2K/8K/16K/32K, n_predict 128, interleaved B/D x2 rounds logger off, 32K arms in their own timed batch (c4-10051443).",
+       "measured_effect": "Decode tok/s bin-b -> bin-d, mean of 2 rounds: 2K 10.43 -> 10.60 (+1.6%), 8K 10.10 -> 10.67 (+5.6%), 16K 9.41 -> 10.47 (+11.2%), 32K 8.29 -> 10.35 (+24.8%). Decode 32K/2K ratio 0.79 -> 0.98 (Strata-flat). Prefill unchanged within noise (2K 211.1 -> 214.1, 8K 214.8 -> 213.7, 16K 204.7 -> 202.1, 32K 193.7 -> 193.8).",
+@@ -1854,7 +1854,7 @@
+         "iq3_s rows"
+       ],
+       "evidence": [
+-        "cache/moe-gather-x1-lane/cells/cellG-10052319-read.json",
++        "cache/moe-gather-x1-lane/cells/cellG-10052319/read.json",
+         "cache/moe-gather-x1-lane/cells/cellH-10060008-read.json",
+         "board/programs/local-inference/lanes/2026-10-05-lane-302-DECISIONS.md"
+       ],

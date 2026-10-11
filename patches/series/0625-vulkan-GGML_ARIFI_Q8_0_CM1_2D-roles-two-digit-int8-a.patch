@@ -1,0 +1,270 @@
+From f2fa694ef9b37605d452b9aa77d70be6a0b863df Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 29 Sep 2026 14:25:40 -0400
+Subject: [PATCH] vulkan: GGML_ARIFI_Q8_0_CM1_2D=<roles> two-digit int8
+ activations for Q8_0 MMQ (candidate B)
+
+lane-296 night int8 maker R3 (HQ seat-68, 2026-09-29). Candidate B keeps the listed Q8_0 roles on the int8 coopmat1
+MMQ but gives them ~15-bit activations: q1 = round(x/d1) as today, then q2 = round((x - q1*f16(d1))/d2) from a
+residual variant of quantize_q8_1 (spec constant RESIDUAL). The MMQ runs once on q1 and once on q2 into two
+split-k slices, summed by split_k_reduce (split_k forced to 1 on this path). Q8_0 weights are exact int8 and the
+accumulation is exact int32, so the only error left is the second digit's rounding. Default (unset) = unchanged.
+Role log prints INT8x2 for those roles.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Lane: lane-296
+---
+ ggml/src/ggml-vulkan/ggml-vulkan-types.h      |  3 +
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          | 78 ++++++++++++++++---
+ .../vulkan-shaders/quantize_q8_1.comp         | 34 +++++++-
+ 3 files changed, 101 insertions(+), 14 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan-types.h b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+index 41b0ba23b3..8e7b62a668 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan-types.h
++++ b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+@@ -1314,6 +1314,8 @@ struct vk_device_struct {
+     std::set<std::string> q8_0_cm1_roles;
+     bool q8_0_cm1_roles_only = false;
+     std::set<std::string> q8_0_cm1_roles_logged;
++    // arifi lane-296 R3: roles whose Q8_0 int8 matmul runs as two int8 passes (q1 + residual q2) [GGML_ARIFI_Q8_0_CM1_2D].
++    std::set<std::string> q8_0_cm1_2d_roles;
+     // arifi lane-296 N11: coopmat1 f32->f16 B conversion. 0 = auto (only when a {type,F16} pipeline
+     // exists and ne11 >= cm1_f16b_min_n), 1 = upstream (always), 2 = never (r86i f32-B kernel).
+     uint32_t cm1_f16b_mode = 0;
+@@ -1400,6 +1402,7 @@ struct vk_device_struct {
+ 
+     vk_pipeline pipeline_matmul_split_k_reduce;
+     vk_pipeline pipeline_quantize_q8_1_x4;
++    vk_pipeline pipeline_quantize_q8_1_x4_res;
+ 
+     vk_pipeline pipeline_dequant[GGML_TYPE_COUNT];
+     vk_pipeline pipeline_dequant_transpose[GGML_TYPE_COUNT]; // fused dequant+transpose for FA quant-KV
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 23153a6b93..b4cabfada5 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -4145,8 +4145,10 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+     }
+     if (device->subgroup_clustered && device->subgroup_require_full_support) {
+         ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4, "quantize_q8_1_x4", quantize_q8_1_x4_subgroup_len, quantize_q8_1_x4_subgroup_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16 }, 1, true, true);
++        ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4_res, "quantize_q8_1_x4_res", quantize_q8_1_x4_subgroup_len, quantize_q8_1_x4_subgroup_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16, 1u }, 1, true, true);
+     } else {
+         ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4, "quantize_q8_1_x4", quantize_q8_1_x4_len, quantize_q8_1_x4_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16 }, 1);
++        ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4_res, "quantize_q8_1_x4_res", quantize_q8_1_x4_len, quantize_q8_1_x4_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16, 1u }, 1);
+     }
+ 
+     for (uint32_t i = 0; i < p021_max_gqa_ratio; ++i) {
+@@ -6041,6 +6043,18 @@ vk_device ggml_vk_get_device(size_t idx) {
+                 if (q8l != nullptr) {
+                     fprintf(stderr, "ggml_vulkan: Q8_0 int8 cm1 roles %s: %s\n", q8o != nullptr ? "ONLY" : "SKIP", q8l);
+                 }
++                const char * q82 = getenv("GGML_ARIFI_Q8_0_CM1_2D");
++                for (const char * p = q82; p != nullptr && *p; ) {
++                    const char * e = strchr(p, ',');
++                    const size_t n = e ? (size_t) (e - p) : strlen(p);
++                    if (n > 0) {
++                        device->q8_0_cm1_2d_roles.insert(std::string(p, n));
++                    }
++                    p = e ? e + 1 : nullptr;
++                }
++                if (q82 != nullptr) {
++                    fprintf(stderr, "ggml_vulkan: Q8_0 int8 cm1 two-digit roles: %s [GGML_ARIFI_Q8_0_CM1_2D]\n", q82);
++                }
+                 const char * fb = getenv("GGML_ARIFI_CM1_F16B");
+                 if (fb != nullptr && strcmp(fb, "upstream") == 0) {
+                     device->cm1_f16b_mode = 1u;
+@@ -7659,10 +7673,14 @@ vk_pipeline ggml_vk_get_quantize_pipeline(ggml_backend_vk_context * ctx, ggml_ty
+     }
+ }
+ 
++static void ggml_vk_quantize_q8_1_with(ggml_backend_vk_context * ctx, vk_context& subctx, const vk_subbuffer & in, const vk_subbuffer & out, uint32_t ne, vk_pipeline pipeline);
++
+ void ggml_vk_quantize_q8_1(ggml_backend_vk_context * ctx, vk_context& subctx, const vk_subbuffer & in, const vk_subbuffer & out, uint32_t ne) {
+-    VK_LOG_DEBUG("ggml_vk_quantize_q8_1(" << "buffer in size=" << in.buffer->size << ", buffer out size=" << out.buffer->size << ", " << ne << ")");
++    ggml_vk_quantize_q8_1_with(ctx, subctx, in, out, ne, ggml_vk_get_quantize_pipeline(ctx, GGML_TYPE_Q8_1));
++}
+ 
+-    vk_pipeline pipeline = ggml_vk_get_quantize_pipeline(ctx, GGML_TYPE_Q8_1);
++static void ggml_vk_quantize_q8_1_with(ggml_backend_vk_context * ctx, vk_context& subctx, const vk_subbuffer & in, const vk_subbuffer & out, uint32_t ne, vk_pipeline pipeline) {
++    VK_LOG_DEBUG("ggml_vk_quantize_q8_1(" << "buffer in size=" << in.buffer->size << ", buffer out size=" << out.buffer->size << ", " << ne << ")");
+ 
+     const uint32_t num_blocks = CEIL_DIV(ne, pipeline->wg_denoms[0]);
+     // clamp the number of elements to the max workgroup count. The shader will iterate over the total number of blocks.
+@@ -7764,6 +7782,8 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
+     if (ctx->device->coopmat_int_support && src0->type == GGML_TYPE_Q8_0 && (uint32_t) ne01 < ctx->device->q8_0_cm1_min_m) {
+         mmp_map = nullptr;
+     }
++    // arifi lane-296 R3: two-digit int8 (q1 + residual q2, two MMQ passes summed by split_k_reduce) for listed roles.
++    bool two_digit = false;
+     // arifi lane-296 night R2: role = the name segment between "blk.N." and ".weight" (exact match, so attn_q != attn_qkv).
+     if (ctx->device->coopmat_int_support && src0->type == GGML_TYPE_Q8_0 && ne11 >= ctx->device->cm1_int_min_n &&
+         ctx->device->q8_0_cm1_min_m != UINT32_MAX) {
+@@ -7779,8 +7799,12 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
+             (ctx->device->q8_0_cm1_roles.count(role) > 0) != ctx->device->q8_0_cm1_roles_only) {
+             mmp_map = nullptr;
+         }
++        const uint64_t d_bytes = sizeof(float) * ggml_nelements(dst);
++        two_digit = mmp_map != nullptr && ctx->device->q8_0_cm1_2d_roles.count(role) > 0 &&
++                    stride_d == ne01 && ne21 == ne11 && ggml_is_contiguous(dst) &&
++                    d_bytes % ctx->device->properties.limits.minStorageBufferOffsetAlignment == 0;
+         if (ctx->device->q8_0_cm1_roles_logged.insert(role).second) {
+-            fprintf(stderr, "ggml_vulkan: Q8_0 role %s (%u rows): %s\n", role.c_str(), (uint32_t) ne01, mmp_map ? "INT8" : "FLOAT");
++            fprintf(stderr, "ggml_vulkan: Q8_0 role %s (%u rows): %s\n", role.c_str(), (uint32_t) ne01, two_digit ? "INT8x2" : mmp_map ? "INT8" : "FLOAT");
+         }
+     }
+     if (mmp_map == nullptr) {
+@@ -7837,13 +7861,17 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
+     const uint64_t y_ne = padded_n * ne10 * ne12 * ne13;
+     const uint64_t d_ne = ggml_nelements(dst);
+ 
+-    const uint32_t split_k = ggml_vk_guess_split_k(ctx, ne01, ne11, ne10, disable_split_k, pipeline);
++    const uint32_t split_k = two_digit ? 1 : ggml_vk_guess_split_k(ctx, ne01, ne11, ne10, disable_split_k, pipeline);
+ 
+     const uint64_t qx_sz = ggml_type_size(src0->type) * x_ne / ggml_blck_size(src0->type);
+     const uint64_t qy_sz = ggml_type_size(src1->type) * y_ne / ggml_blck_size(src1->type);
+     const uint64_t x_sz = !qx_needs_dequant ? qx_sz : sizeof(ggml_fp16_t) * x_ne;
+     const uint64_t y_sz = quantize_y ? (ggml_vk_align_size(y_ne, 128) * ggml_type_size(GGML_TYPE_Q8_1) / ggml_blck_size(GGML_TYPE_Q8_1)) : (y_f32_kernel ? sizeof(float) * y_ne : sizeof(ggml_fp16_t) * y_ne);
+     const uint64_t d_sz = sizeof(float) * d_ne;
++    two_digit = two_digit && quantize_y;
++    // two-digit: q2 lives after q1 in prealloc_y (offset aligned, 144-byte read slack kept for both)
++    const uint64_t y2_off = two_digit ? ggml_vk_align_size(CEIL_DIV(y_sz, 144) * 144, ctx->device->properties.limits.minStorageBufferOffsetAlignment) : 0;
++    const uint64_t y_need = two_digit ? y2_off + CEIL_DIV(y_sz, 144) * 144 : y_sz;
+ 
+     vk_pipeline to_fp16_vk_0 = nullptr;
+     vk_pipeline to_fp16_vk_1 = nullptr;
+@@ -7867,22 +7895,22 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
+     }
+ 
+     {
+-        const uint64_t split_k_size = split_k > 1 ? d_sz * split_k : 0;
++        const uint64_t split_k_size = split_k > 1 ? d_sz * split_k : two_digit ? 2 * d_sz : 0;
+         if (
+                 (qx_needs_dequant && x_sz > ctx->device->properties.limits.maxStorageBufferRange) ||
+                 (qy_needs_dequant && y_sz > ctx->device->properties.limits.maxStorageBufferRange) ||
+-                (split_k > 1 && split_k_size > ctx->device->properties.limits.maxStorageBufferRange)) {
++                (split_k_size > 0 && split_k_size > ctx->device->properties.limits.maxStorageBufferRange)) {
+             GGML_ABORT("Requested preallocation size is too large");
+         }
+         if (qx_needs_dequant && ctx->prealloc_size_x < x_sz) {
+             ctx->prealloc_size_x = x_sz;
+             ggml_vk_preallocate_buffers(ctx, subctx);
+         }
+-        if ((qy_needs_dequant || quantize_y) && ctx->prealloc_size_y < y_sz) {
+-            ctx->prealloc_size_y = y_sz;
++        if ((qy_needs_dequant || quantize_y) && ctx->prealloc_size_y < y_need) {
++            ctx->prealloc_size_y = y_need;
+             ggml_vk_preallocate_buffers(ctx, subctx);
+         }
+-        if (split_k > 1 && ctx->prealloc_size_split_k < split_k_size) {
++        if (split_k_size > 0 && ctx->prealloc_size_split_k < split_k_size) {
+             ctx->prealloc_size_split_k = split_k_size;
+             ggml_vk_preallocate_buffers(ctx, subctx);
+         }
+@@ -7897,7 +7925,10 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
+         if (quantize_y) {
+             ggml_pipeline_request_descriptor_sets(ctx, to_q8_1, 1);
+         }
+-        if (split_k > 1) {
++        if (two_digit) {
++            ggml_pipeline_request_descriptor_sets(ctx, ctx->device->pipeline_quantize_q8_1_x4_res, 1);
++        }
++        if (split_k > 1 || two_digit) {
+             ggml_pipeline_request_descriptor_sets(ctx, ctx->device->pipeline_matmul_split_k_reduce, 1);
+         }
+     }
+@@ -7992,6 +8023,32 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
+     }
+ 
+     // compute
++    if (two_digit) {
++        // second digit q2 of the activations (recomputed every call; q1 above keeps its reuse cache)
++        if (ctx->prealloc_y_need_sync) {
++            ggml_vk_sync_buffers(ctx, subctx);
++        }
++        ggml_vk_quantize_q8_1_with(ctx, subctx, ggml_vk_subbuffer(ctx, d_Qy, qy_buf_offset), ggml_vk_subbuffer(ctx, d_Y, y2_off), y_ne,
++                                   ctx->device->pipeline_quantize_q8_1_x4_res);
++        if (ctx->prealloc_split_k_need_sync) {
++            ggml_vk_sync_buffers(ctx, subctx);
++        }
++        for (uint64_t pass = 0; pass < 2; ++pass) {
++            ggml_vk_matmul(
++                ctx, subctx, pipeline,
++                { d_X, x_buf_offset, x_sz }, { d_Y, pass * y2_off, y_sz },
++                { ctx->prealloc_split_k, pass * d_sz, d_sz }, {},
++                ne01, ne11, ne10,
++                ne10, ne10, stride_d, stride_batch_x, stride_batch_y, stride_batch_d,
++                1, ne12*ne13, ne02, ne12, r2, r3, padded_n
++            );  // NOLINT
++        }
++        ggml_vk_sync_buffers(ctx, subctx);
++        const std::array<uint32_t, 2> pc2 = { (uint32_t) d_ne, 2u };
++        ggml_vk_dispatch_pipeline(ctx, subctx, ctx->device->pipeline_matmul_split_k_reduce,
++                                  { vk_subbuffer{ ctx->prealloc_split_k, 0, 2 * d_sz }, ggml_vk_subbuffer(ctx, d_D, d_buf_offset) }, pc2, { (uint32_t) d_ne, 1, 1 });
++        ctx->prealloc_split_k_need_sync = true;
++    } else {
+     ggml_vk_matmul(
+         ctx, subctx, pipeline,
+         { d_X, x_buf_offset, x_sz }, { d_Y, y_buf_offset, y_sz },
+@@ -8000,6 +8057,7 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
+         ne10, ne10, stride_d, stride_batch_x, stride_batch_y, stride_batch_d,
+         split_k, ne12*ne13, ne02, ne12, r2, r3, padded_n
+     );  // NOLINT
++    }
+ 
+     if (x_non_contig || qx_needs_dequant) {
+         ctx->prealloc_x_need_sync = true;
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/quantize_q8_1.comp b/ggml/src/ggml-vulkan/vulkan-shaders/quantize_q8_1.comp
+index 50bebfcd88..55f2f50e73 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/quantize_q8_1.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/quantize_q8_1.comp
+@@ -23,6 +23,8 @@ layout (push_constant) uniform parameter
+ layout(constant_id = 0) const uint GROUP_SIZE = 32;
+ // arifi lane-296 night R2: 1 = round against the stored f16 scale (scale-consistent), clamp to +-127.
+ layout(constant_id = 1) const uint SCALE_F16 = 0;
++// arifi lane-296 R3: 1 = write the second int8 digit (residual of the first pass), for two-pass int8 matmuls.
++layout(constant_id = 2) const uint RESIDUAL = 0;
+ layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
+ 
+ layout (binding = 0) readonly buffer A {vec4 data_a[];};
+@@ -79,12 +81,36 @@ void quantize(const uint wgid) {
+     const float amax = subgroupClusteredMax(thread_max, 8);
+ #endif
+ 
+-    const float d = SCALE_F16 != 0 ? unpackHalf2x16(packHalf2x16(vec2(amax / 127.0, 0.0))).x : amax / 127.0;
+-    const float d_inv = d != 0.0 ? 1.0 / d : 0.0;
+-    vals = round(vals * d_inv);
++    float d = SCALE_F16 != 0 ? unpackHalf2x16(packHalf2x16(vec2(amax / 127.0, 0.0))).x : amax / 127.0;
++    float d_inv = d != 0.0 ? 1.0 / d : 0.0;
++    vec4 q = round(vals * d_inv);
+     if (SCALE_F16 != 0) {
+-        vals = clamp(vals, vec4(-127.0), vec4(127.0));
++        q = clamp(q, vec4(-127.0), vec4(127.0));
+     }
++    if (RESIDUAL != 0) {
++        // second int8 digit: requantize x - q1 * f16(d1), q1 recomputed exactly as the first pass stored it
++        vals -= q * unpackHalf2x16(packHalf2x16(vec2(d, 0.0))).x;
++        const vec4 abs_r = abs(vals);
++        const float thread_rmax = max(max(abs_r.x, abs_r.y), max(abs_r.z, abs_r.w));
++#ifndef USE_SUBGROUPS
++        barrier();
++        shmem[tid] = thread_rmax;
++        barrier();
++        [[unroll]] for (uint s = 4; s > 0; s >>= 1) {
++            if (iqs < s) {
++                shmem[tid] = max(shmem[tid], shmem[tid + s]);
++            }
++            barrier();
++        }
++        const float rmax = shmem[block_in_wg * 8];
++#else
++        const float rmax = subgroupClusteredMax(thread_rmax, 8);
++#endif
++        d = rmax / 127.0;
++        d_inv = d != 0.0 ? 1.0 / d : 0.0;
++        q = round(vals * d_inv);
++    }
++    vals = q;
+ 
+ #ifndef QBLOCK_X4
+     data_b[ib].qs[iqs] = pack32(i8vec4(round(vals)));

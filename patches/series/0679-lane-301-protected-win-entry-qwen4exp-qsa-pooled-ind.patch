@@ -1,0 +1,49 @@
+From 2cca8c57ac19af787e938a0eddda8eb8b75b91ba Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 16:25:02 -0400
+Subject: [PATCH] lane-301: protected-win entry
+ qwen4exp-qsa-pooled-indexer-cache (row 25, c4 logger-off x2: decode 32K
+ 8.29->10.35 tok/s, ids identical)
+
+(cherry picked from commit 902ab8a1c37988238556e34274552daa2e61e558)
+
+Origin: ArifiLabs (native) - fork-authored (lane-301); no upstream origin exists.
+Measured-effect: UNMEASURED on its own - supporting commit; see release ledger Table 1 W16, the number sits on that win's main commit
+---
+ tools/arifi-sync/protected-wins.json | 23 +++++++++++++++++++++++
+ 1 file changed, 23 insertions(+)
+
+diff --git a/tools/arifi-sync/protected-wins.json b/tools/arifi-sync/protected-wins.json
+index 6ed4ef594a..894710abea 100644
+--- a/tools/arifi-sync/protected-wins.json
++++ b/tools/arifi-sync/protected-wins.json
+@@ -1780,6 +1780,29 @@
+       "valid_conditions": "QSA models with an indexer top-k hint (qwen4exp); F16 K/V; KV >= max(4096, 2*n_kv_max). Quantized KV still runs dense prefill (q8_0 sparse gather not ported; MMQ scalar FA path indexes K linearly).",
+       "notes": "Lane 301 REPORT/DECISIONS D5, D7: board/programs/local-inference/lanes/2026-10-05-lane-301-*.md.",
+       "_registered": "2026-10-05, lane 301 relaunch 4."
++    },
++    {
++      "id": "qwen4exp-qsa-pooled-indexer-cache",
++      "status": "active",
++      "mechanism": "Persistent pooled indexer-key cache for qwen4exp QSA layers (Strata FEATURE-MAP row 25, lane 301). Pool + rms_norm + rope of the raw indexer keys runs ONCE per completed 4-cell block and is stored per QSA layer (f32 rows keyed by block index); each ubatch pools only its fresh blocks and the tail, instead of re-gathering, re-pooling, re-norming and re-roping all n_kv raw keys every token. Same op chain per row (bit-identical rows). Full pooling fallback (writes or marks stale) on multi-sequence, embedding ubatches with 2d positions, or spans past n_fresh; invalidation on clear/seq_cp/seq_keep/seq_add/seq_div/state_read. Switches: GGML_ARIFI_QSA_POOL_CACHE=0 (off == previous path), RED plant GGML_ARIFI_QSA_POOL_RED=2 (drops every fresh write).",
++      "commit": "fa1ef58cda43dd9ef0c73bd7f4be3ddcf98352ec",
++      "protected_paths": [
++        "src/llama-memory-hybrid-idx.cpp",
++        "src/llama-memory-hybrid-idx.h",
++        "src/models/qwen4exp.cpp"
++      ],
++      "anchors": [
++        "GGML_ARIFI_QSA_POOL_CACHE",
++        "GGML_ARIFI_QSA_POOL_RED",
++        "first INCREMENTAL graph"
++      ],
++      "evidence": "cache/qsa-x1-lane/cells/c4-10051443-state.json",
++      "quality_gate": "Greedy 128 ids identical bin-b vs bin-d at 2K/8K/16K/32K in both rounds (16/16 runs, one hash per length). RED plant GGML_ARIFI_QSA_POOL_RED=2 changes the greedy ids at 8K and 32K (c4-10051443-red2). Engagement checked: server log 'first INCREMENTAL graph ... incr_ok=1' (c4-10051443-d-smoke).",
++      "workload": "Qwen3.8-Flash-Next GSQ-RCO IQ3_S (ISTA-DASLab), llama-server -ub 4096 -b 4096 -c 33792 -fa on -lm dio, F16 KV, Radeon 890M Vulkan (Minisforum AI X1 Pro-470); prompts 2K/8K/16K/32K, n_predict 128, interleaved B/D x2 rounds logger off, 32K arms in their own timed batch (c4-10051443).",
++      "measured_effect": "Decode tok/s bin-b -> bin-d, mean of 2 rounds: 2K 10.43 -> 10.60 (+1.6%), 8K 10.10 -> 10.67 (+5.6%), 16K 9.41 -> 10.47 (+11.2%), 32K 8.29 -> 10.35 (+24.8%). Decode 32K/2K ratio 0.79 -> 0.98 (Strata-flat). Prefill unchanged within noise (2K 211.1 -> 214.1, 8K 214.8 -> 213.7, 16K 204.7 -> 202.1, 32K 193.7 -> 193.8).",
++      "valid_conditions": "qwen4exp QSA layers (indexer top-k, compress ratio 4), one sequence, token ubatches. Multi-sequence or 2d-position embedding ubatches fall back to full pooling (previous cost).",
++      "notes": "Lane 301 DECISIONS D11, D13, D17: board/programs/local-inference/lanes/2026-10-05-lane-301-*.md. Stacks on vulkan-fa-sparse-prefill-qsa (both arms carried it).",
++      "_registered": "2026-10-05, lane 301 relaunch 6."
+     }
+   ]
+ }

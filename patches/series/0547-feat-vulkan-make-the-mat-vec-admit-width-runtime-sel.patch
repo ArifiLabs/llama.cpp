@@ -1,0 +1,164 @@
+From b72d4afe41a79ff241c347cfb5f26363d942e36b Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 19 Sep 2026 12:06:34 -0400
+Subject: [PATCH] feat(vulkan): make the mat-vec admit width
+ runtime-selectable, default inert
+
+The drafted line's multiplier is the cost of one extra VERIFY ROW, not the n=1 rate
+(R63 3a: 43.0 ms = 0.177 plain-token-equivalents, which caps the line at 10.9 t/s even
+with a drafter that is never wrong at n-max 4). That cost could not be compared across
+regimes: below 9 columns the GEMM path was unreachable, so no width the served line
+actually uses had ever been timed on both paths. ggml_vk_mmv_max_cols() reads
+GGML_ARIFI_MMV_MAX_COLS and lowers the admit; =0 puts every width including n=1 on the
+GEMM path, so both regimes share an n=1 anchor. Unset, the helper returns the inherited
+constant and the added `> 0` conjunct is trivially true, so the route condition is the
+inherited one term for term - inertness is source-level, not just a passing test.
+The perf-logger's _VEC label reads the same value, so a receipt names the path taken.
+
+Correctness: 71/71 OK at the default and at =0, rc 0 (r57-evidence/20-mulmat-q4k-*.txt),
+covering n=1..8, odd m (1023/6271/6273) and both 27B decode shapes. n=1 on the GEMM path
+was previously unreachable on this fork.
+
+Also lands step 0's receipts and the SPIR-V load breakdown that redirect this lane:
+the n=1 -> n=4 delta (the per-COLUMN cost) contains NO A-side loads in either shader
+(buffer identity by descriptor binding, not inferred), so every A-side cut - including
+the three this lane was briefed to make - is amortized over columns by construction.
+
+Origin: fork-authored (ArifiLabs lane-248 R57 q4_K cheaper dot, Opus 5 MEDIUM kernel-maker)
+Measured-effect: op-level perf-mode only (rows in receipts); 71/71 OK at default and at =0, no default moves on any device; served t/s UNMEASURED by the maker - HQ pairs quiet
+Lane: lane-248
+Cherry-picked-from: d86410c2d (SOURCE PATHS ONLY, ArifiLabs lane-254 R66 integration)
+Recut-onto: 1b6185951 (ArifiLabs lane-254 R66c, from 51020f3a4)
+Conflict-resolved: S4 split (f172be756): auto_split - our hunks re-homed into ggml-vulkan-types.h,ggml-vulkan.cpp; wrap/same-point regions merged in place (fixS4_638.py)
+---
+ ggml/src/ggml-vulkan/ggml-vulkan-types.h | 25 +++++++++++
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp     |  5 ++-
+ tests/test-backend-ops.cpp               | 56 ++++++++++++++++++++++++
+ 3 files changed, 84 insertions(+), 2 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan-types.h b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+index 703cad9933..433ef888b3 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan-types.h
++++ b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+@@ -385,6 +385,31 @@ static constexpr uint32_t mul_mat_vec_max_cols = 8;
+ 
+ static constexpr uint32_t p021_max_gqa_ratio = 8;
+ 
++// ArifiLabs lane-248 / R57: the mat-vec ADMIT width, made runtime-selectable (runtime-switch law,
++// F-08: default = the inherited constant, no default moves).
++//
++// The decode multiplier on the drafted line is the cost of one extra VERIFY ROW, not the n=1 rate
++// (R63 §3a: the marginal row is 43.0 ms = 0.177 plain-token-equivalents, and that number alone caps
++// the line at 10.9 t/s with a perfect drafter at n-max 4). Deciding where that marginal cost is
++// cheapest needs the SAME (shape, type, width) timed on BOTH paths, and n <= 8 could only ever take
++// mat-vec: the GEMM path was unreachable below 9 columns, so the two regimes could never be
++// compared at a width the served line actually uses. Lowering this value hands widths above it to
++// ggml_vk_mul_mat_q_f16() out of one binary. GGML_ARIFI_MMV_MAX_COLS=0 puts EVERY width including
++// n=1 on the GEMM path (the n=1 clause is gated by the same value, so the two regimes can be
++// compared at the same anchor); 8 (the default) is byte-for-byte the inherited routing.
++static uint32_t ggml_vk_mmv_max_cols() {
++    static const uint32_t v = [] {
++        const char * s = getenv("GGML_ARIFI_MMV_MAX_COLS");
++        if (s == nullptr) {
++            return mul_mat_vec_max_cols;
++        }
++        int x = atoi(s);
++        x = std::max(0, std::min(x, (int) mul_mat_vec_max_cols));
++        return (uint32_t) x;
++    }();
++    return v;
++}
++
+ // lane-230 / R46b commit D: the R47d S-X8 mat-vec sweep (lane-232) as a DEVICE-PROBED DEFAULT.
+ //
+ // R47d paired rows 1/2/4/8 against workgroups 64/128/256 over the four real 27B S-X8 decode
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 1fcaaa9a5a..24c724c01f 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -8572,7 +8572,8 @@ void ggml_vk_mul_mat(ggml_backend_vk_context * ctx, vk_context& subctx, const st
+         ggml_vk_mul_mat_vec_q_f16(ctx, subctx, cgraph, node_idx, true);
+     // mul_mat_vec supports batching ne12*ne13 when ne11==1, or treating ne11 as the batch size (up to four)
+     // when ne12 and ne13 are one.
+-    } else if ((dst->ne[1] == 1 || (dst->ne[1] <= mul_mat_vec_max_cols && src1->ne[2] * src1->ne[3] == 1)) &&
++    } else if (ggml_vk_mmv_max_cols() > 0 &&
++               (dst->ne[1] == 1 || (dst->ne[1] <= ggml_vk_mmv_max_cols() && src1->ne[2] * src1->ne[3] == 1)) &&
+                (src0->type == GGML_TYPE_F32 || src0->type == GGML_TYPE_F16 || src0->type == GGML_TYPE_BF16 || ggml_is_quantized(src0->type))) {
+         ggml_vk_mul_mat_vec_q_f16(ctx, subctx, cgraph, node_idx);
+     } else {
+@@ -18304,7 +18305,7 @@ std::string vk_perf_logger::get_node_fusion_name(const ggml_tensor * node, const
+         const uint64_t k     = node->src[1]->ne[0];
+         const uint64_t batch = node->ne[2] * node->ne[3];
+         std::string    name  = ggml_op_name(node->op);
+-        if ((node->op == GGML_OP_MUL_MAT && n <= mul_mat_vec_max_cols) ||
++        if ((node->op == GGML_OP_MUL_MAT && n <= ggml_vk_mmv_max_cols()) ||
+             (node->op == GGML_OP_MUL_MAT_ID && node->src[2]->ne[1] == 1)) {
+             name += "_VEC";
+         }
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index a5af5be1c6..f56aec964c 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -12554,6 +12554,62 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
+         }
+     }
+ 
++    // ArifiLabs lane-248 / R57 step 0: the k-sweep FALSIFIER for the q4_K wide-width knee.
++    //
++    // R50 (lane-239) left the n=3 -> n=4 drop on q4_K MMVQ (~16% at 248320x5120) attributed to a
++    // capacity crossing: the per-workgroup q8_1 B tile is ~5.4 KB per column at k=5120, so n=4
++    // crosses a 16 KB L0/L1. CHECK-R50-FABLE finding 8 named the one measurement that kills that
++    // premise without touching a shader -- the SAME shape at SMALL k. At k=1024 the B tile is
++    // ~1.1 KB per column (4.4 KB at n=4), far under any per-CU cache on gfx1103, so a capacity
++    // mechanism MUST move the knee. If the drop is still there at k=1024, capacity is dead and the
++    // q4_K cheaper-dot lane proceeds as instruction cuts only.
++    //
++    // k=5120 at this m is already covered by the two blocks above; only 1024 and 2048 are new.
++    // n=1..5 spans both sides of the knee AND gives the two low widths that show whether the knee
++    // MOVES with k (a capacity threshold would move it; an issue ceiling would not).
++    // These rows only reach the MMVQ shader with GGML_VK_FORCE_MMVQ=1 (ggml_vk_should_use_mmvq
++    // returns true unconditionally at mmvq_mode == 1, ggml-vulkan.cpp:9531-9536); without the
++    // force they measure the f32 dequant shader, which is the sweep's paired control arm.
++    for (int64_t k : {1024, 2048}) {
++        for (int bs : {1, 2, 3, 4, 5}) {
++            test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_K, GGML_TYPE_F32, 248320, bs, k, {1, 1}, {1, 1}));
++        }
++    }
++    // The step-0 table (r57-evidence/10-ksweep.txt) came back with the drop SHRINKING as k falls:
++    // the n=3->4 step costs 2.68 us per MB of A at k=5120 and 0.88 at k=2048, while n=2->3 costs
++    // 0.69 / 0.78 at the two k -- i.e. the knee is k-DEPENDENT, which is what a capacity threshold
++    // looks like and what an issue ceiling does not. The decisive follow-up is whether the knee
++    // MOVES to the width where the k=2048 B tile reaches the same size: q8_1 is ~1.125 bytes per
++    // weight, so the per-column tile is 5.76 KB at k=5120 (n=4 -> 23 KB) and 2.30 KB at k=2048,
++    // which reaches 23 KB only at n=10. n=6..8 extends the k=2048 row far enough to see it move.
++    // (k=1024 is excluded on purpose: at K_PER_ITER*BLOCK_SIZE = 1024 each workgroup runs ONE
++    // iteration, and the fixed-cost fit over k=2048/5120 predicts 2111 us against 4101 measured --
++    // that cell is launch-bound and cannot resolve a loop-behaviour question.)
++    for (int bs : {6, 7, 8}) {
++        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_K, GGML_TYPE_F32, 248320, bs, 2048, {1, 1}, {1, 1}));
++    }
++
++    // ArifiLabs lane-248 / R57 decider: the MARGINAL VERIFY ROW, both regimes, one binary.
++    //
++    // R63 §3a measures the served Q4_K_XL DFlash2 line's marginal verify row at 43.0 ms = 0.177
++    // plain-token-equivalents, which caps the line at 10.9 t/s even with a drafter that is never
++    // wrong; 15-20 t/s needs that row near ~15 ms. So the quantity a kernel lane must move is the
++    // per-COLUMN cost, not the n=1 rate. This block gives it a table: the Q4_K_XL type mix
++    // (q4_K / q5_K / q6_K / iq4_xs) on the three dominant decode shapes, at n = 1..16 -- across
++    // the mat-vec / GEMM boundary (mul_mat_vec_max_cols = 8), so the marginal us per extra column
++    // can be read in BOTH regimes and the crossing found. With GGML_ARIFI_MMV_MAX_COLS the low
++    // widths can be re-timed on the GEMM path out of the same binary.
++    //
++    // n = 1..8 for q4_K/q5_K/q6_K on these shapes already exists in the blocks above; the rows
++    // that were missing are every n >= 9 and iq4_xs outside 17408x5120.
++    for (int bs : {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}) {
++        for (ggml_type type_a : {GGML_TYPE_Q4_K, GGML_TYPE_Q5_K, GGML_TYPE_Q6_K, GGML_TYPE_IQ4_XS}) {
++            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32,  17408, bs,  5120, {1, 1}, {1, 1}));
++            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32,   5120, bs, 17408, {1, 1}, {1, 1}));
++            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 248320, bs,  5120, {1, 1}, {1, 1}));
++        }
++    }
++
+     // qwen3-30b-a3b
+     for (int bs : {1, 4, 8, 32, 64, 128, 256, 512}) {
+         for (ggml_type type_a : {GGML_TYPE_F32, GGML_TYPE_F16, GGML_TYPE_Q4_0, GGML_TYPE_Q8_0, GGML_TYPE_Q4_K, GGML_TYPE_Q6_K, GGML_TYPE_IQ2_XS, GGML_TYPE_IQ4_XS}) {

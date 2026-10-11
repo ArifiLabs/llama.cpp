@@ -1,0 +1,46 @@
+From 3ae55879484d96804a30dc49d31fd0f32919fc6b Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 24 Sep 2026 07:58:19 -0400
+Subject: [PATCH] tests: perf rows bs 1..9 at the served attention shapes
+ (10240x5120, 6144x5120, 12288x5120 for q4_K/q5_K/q6_K/iq4_xs/iq3_s/iq3_xxs;
+ 5120x6144, 1024x5120 for q5_K/iq4_xs/iq3_s/iq3_xxs, bs=9 only for q4_K/q6_K)
+
+R75 step 0b (Amendment a, R77 SIDE-FINDINGS #2): these classes had no perf case at any or at these types, so R77's byte-weighted MUL_MAT column was a lower bound. Tests only; executed-cell counts per class are in the R75 fill/decider receipts (r75-evidence/2x-*, 4x-r77-fill-*).
+
+Origin: fork-authored (ArifiLabs lane-262 R75 iq4_xs MMVQ route, Opus 5 kernel-maker)
+Lane: lane-262
+Cherry-picked-from: 803a2ff85e29a069854fd4b2d15c264afa9aaea9
+---
+ tests/test-backend-ops.cpp | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index a4164ffb96..58b077c6a1 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -12651,6 +12651,25 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
+         }
+     }
+ 
++    // ArifiLabs lane-262 / R75 step 0b (R77 SIDE-FINDINGS #2): the served attention shapes that had
++    // NO perf case, so R77's byte-weighted MUL_MAT column was a lower bound over ~1/3 of the bytes.
++    // 10240x5120 (attn_qkv), 6144x5120 (attn_gate), 12288x5120 (attn_q) at every served type;
++    // 5120x6144 / 1024x5120 for the four types the R71b block above does not carry (q4_K/q6_K
++    // gain only bs=9 there). bs 1..9 = the verify band plus one past the mat-vec boundary.
++    // Filters: -p "type_a=iq4_xs,type_b=f32,m=10240" etc. (ggml type names, lower-case).
++    for (int bs : {1, 2, 3, 4, 5, 6, 7, 8, 9}) {
++        for (ggml_type type_a : {GGML_TYPE_Q4_K, GGML_TYPE_Q5_K, GGML_TYPE_Q6_K, GGML_TYPE_IQ4_XS, GGML_TYPE_IQ3_S, GGML_TYPE_IQ3_XXS}) {
++            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 10240, bs, 5120, {1, 1}, {1, 1}));
++            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32,  6144, bs, 5120, {1, 1}, {1, 1}));
++            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 12288, bs, 5120, {1, 1}, {1, 1}));
++            const bool r71b_has = type_a == GGML_TYPE_Q4_K || type_a == GGML_TYPE_Q6_K;
++            if (!r71b_has || bs == 9) {
++                test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 5120, bs, 6144, {1, 1}, {1, 1}));
++                test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 1024, bs, 5120, {1, 1}, {1, 1}));
++            }
++        }
++    }
++
+     // ArifiLabs lane-230 / R46: the REAL 27B S-X8 decode shapes. The 27B .sx8v43 file carries 128
+     // gate/up matrices at 17408x5120 and 64 down matrices at 5120x17408 in S-X8, plus the
+     // 248320x5120 embedding/output pair; every other projection is Q8_0. Q8_0 and Q4_K ride along

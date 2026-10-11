@@ -1,0 +1,31 @@
+From 3c1057b52e78172947584a519dfe07ffab7890a5 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 07:19:16 -0400
+Subject: [PATCH] lane-298: ngram-mod CAP0 gate starts at full width, caps only
+ after a miss
+
+begin() set cap = cap0, so the ngc4/ngc8 arms truncated the cold pass and the repeat ramp from the first draft, while 1c4d20f0f said the cap applies after a miss. Now the cap starts at n_max and drops to cap0 on a miss, doubling back on full accepts.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Lane: lane-298
+(cherry picked from commit 35851886d4c99202f0339b6a60af3b93a4a28526)
+
+Origin: ArifiLabs (native) - fork-authored (lane-298); no upstream origin exists.
+Measured-effect: UNMEASURED - no served number for this commit in the release ledger or the commit message
+---
+ common/speculative.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/common/speculative.cpp b/common/speculative.cpp
+index 78a4543681..4db193ed05 100644
+--- a/common/speculative.cpp
++++ b/common/speculative.cpp
+@@ -3017,7 +3017,7 @@ struct common_speculative_impl_ngram_mod : public common_speculative_impl {
+ 
+         sinfo.i_last = 0;
+         sinfo.n_draft_last = 0;
+-        sinfo.cap = cap0;
++        sinfo.cap = cap0 > 0 ? params.n_max : 0; // full width until the first miss
+ 
+         const size_t n = mod.get_n();
+         if (prompt.size() < n) {

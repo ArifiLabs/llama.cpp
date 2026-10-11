@@ -1,0 +1,105 @@
+From b73076c565a4701a905134c70e3f5d1bf34be86c Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 04:05:59 -0400
+Subject: [PATCH] lane-300: kv-zero hardening - mid-decode window bound,
+ transposed-V block assert, zeroing log
+
+A later ubatch of the same decode may run while the previous graph still reads [0, n_kv_prev) (async backends). zero_stale_cells now scans only [n_kv_prev, n_kv) for i_cur > 0 and keeps the pending flag, so cells freed mid-decode (SWA purge) are zeroed at the next decode's first ubatch; until then they hold this request's own content, so reads stay identical across identical requests. Transposed V asserts blck_size 1 (the stride math is per element). One INFO line per zeroing event (cells, runs, window) is the zero-work receipt on served shapes.
+
+Not covered (scope): live cells of OTHER sequences inside [0, n_kv) with -np > 1 (cross-sequence content dependence); the lane-188 tail ring; the QSA pooled indexer cache.
+
+Origin: lane-300
+Measured-effect: OPT-IN after cell 31 (default 0 from the commit 'KV_ZERO_FREED default 1 -> 0'): -fa off history == fresh bit-equal, S-NF F-nondet 4 -> 0 (cells/c31p-10070726-*); served ids Z0 == I every load (c31q-10070739, c31o-10070746, c31o-10070901); cost QM pooled +0.45% (floor 0.87%), OO pooled -0.31% / -3.23% (floors 0.38% / 7.33%)
+---
+ src/llama-kv-cache.cpp | 20 ++++++++++++++++----
+ src/llama-kv-cache.h   |  2 +-
+ 2 files changed, 17 insertions(+), 5 deletions(-)
+
+diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
+index 72b2a786e9..09d38dfb5f 100644
+--- a/src/llama-kv-cache.cpp
++++ b/src/llama-kv-cache.cpp
+@@ -1810,6 +1810,7 @@ void llama_kv_cache::zero_cells(uint32_t strm, uint32_t i0, uint32_t i1, std::ve
+         }
+ 
+         // transposed V (no flash attention, f16/f32 only): cell i of embd row d sits at (d*kv_size + i)*esz
++        GGML_ASSERT(ggml_blck_size(v->type) == 1);
+         const size_t esz = ggml_type_size(v->type);
+         const size_t w   = (size_t) (i1 - i0)*esz;
+         if (zeros.size() < w) {
+@@ -1819,15 +1820,17 @@ void llama_kv_cache::zero_cells(uint32_t strm, uint32_t i0, uint32_t i1, std::ve
+     }
+ }
+ 
+-void llama_kv_cache::zero_stale_cells(const slot_info & sinfo, uint32_t n_kv) {
++void llama_kv_cache::zero_stale_cells(const slot_info & sinfo, uint32_t lo, uint32_t n_kv) {
+     if (!kv_zero_pending || other || model.hparams.no_alloc || !llama_kv_zero_freed()) {
+         return;
+     }
+ 
+     // ponytail: O(kv_size) scan per ubatch while a freed cell sits outside the read window; a min-index
+     // watermark if that ever shows in a profile
+-    bool left = sinfo.n_stream() < n_stream;
++    bool left = lo > 0 || sinfo.n_stream() < n_stream;
+     std::vector<uint8_t> zeros;
++    uint32_t n_cells = 0;
++    uint32_t n_runs  = 0;
+ 
+     for (uint32_t s = 0; s < sinfo.n_stream(); ++s) {
+         const uint32_t strm  = sinfo.strm[s];
+@@ -1836,7 +1839,7 @@ void llama_kv_cache::zero_stale_cells(const slot_info & sinfo, uint32_t n_kv) {
+ 
+         const uint32_t n = std::min<uint32_t>(n_kv, cells.size());
+ 
+-        for (uint32_t i = 0; i < n; ) {
++        for (uint32_t i = lo; i < n; ) {
+             if (!dirty[i] || !cells.is_empty(i)) {
+                 ++i;
+                 continue;
+@@ -1846,6 +1849,8 @@ void llama_kv_cache::zero_stale_cells(const slot_info & sinfo, uint32_t n_kv) {
+                 dirty[j++] = 0;
+             }
+             zero_cells(strm, i, j, zeros);
++            n_cells += j - i;
++            n_runs++;
+             i = j;
+         }
+ 
+@@ -1854,6 +1859,10 @@ void llama_kv_cache::zero_stale_cells(const slot_info & sinfo, uint32_t n_kv) {
+         }
+     }
+ 
++    if (n_cells > 0) {
++        LLAMA_LOG_INFO("%s: kv-zero %u freed cells in %u runs, window [%u, %u)\n", __func__, n_cells, n_runs, lo, n_kv);
++    }
++
+     kv_zero_pending = left;
+ }
+ 
+@@ -4354,9 +4363,12 @@ bool llama_kv_cache_context::apply() {
+         return true;
+     }
+ 
++    // a later ubatch of the same decode may run while the previous graph still reads [0, n_kv): only zero above it
++    const uint32_t zero_lo = i_cur > 0 ? n_kv : 0;
++
+     kv->apply_ubatch(sinfos[i_cur], ubatches[i_cur]);
+     n_kv = kv->get_n_kv(sinfos[i_cur]);
+-    kv->zero_stale_cells(sinfos[i_cur], n_kv);
++    kv->zero_stale_cells(sinfos[i_cur], zero_lo, n_kv);
+ 
+     // InnerQ: check if CUDA calibration finalized and tensor needs update
+     if (kv->get_turbo_innerq_scale_inv() != nullptr && turbo_innerq_needs_tensor_update()) {
+diff --git a/src/llama-kv-cache.h b/src/llama-kv-cache.h
+index 4252b201d1..d8a8ca5e6a 100644
+--- a/src/llama-kv-cache.h
++++ b/src/llama-kv-cache.h
+@@ -400,7 +400,7 @@ private:
+     void zero_cells(uint32_t strm, uint32_t i0, uint32_t i1, std::vector<uint8_t> & zeros) const;
+ 
+ public:
+-    void zero_stale_cells(const slot_info & sinfo, uint32_t n_kv);
++    void zero_stale_cells(const slot_info & sinfo, uint32_t lo, uint32_t n_kv);
+ 
+ private:
+     // TODO: temporary until we refactor to be able to share the same cells between 2 kv caches [TAG_KV_CACHE_SHARE_CELLS]

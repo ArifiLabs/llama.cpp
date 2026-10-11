@@ -1,0 +1,188 @@
+From 903b57ba92eb00c715fe0521b7012bd640259032 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 10 Oct 2026 19:19:17 -0400
+Subject: [PATCH] arifi-sync: reverted-on-line disposition for protected-win
+ registration (HQ87 Q89 (a))
+
+An unregistered measured-win commit W in base..ref is exempt only when a later commit R in
+base..ref names W by sha and is its exact inverse: replaying the reverse of every commit R names
+onto R^ reproduces R's tree on every path they touch (registry JSONs and the generated series
+excepted). validate prints it as REVERTED (W by R). A one-line difference, a reverse that does
+not apply, or an R that does not name W leaves W UNREGISTERED (fail-closed). Tests: exact revert
+GREEN, set revert on one file GREEN, one-line difference RED, unnamed inverse RED.
+
+Deviation from the HQ87 wording (single-commit patch-id equality): 92413d1822 reverts four commits
+at once (c8446c32d0 + c1079d3153 both edit ggml-vulkan.cpp), so no single reversed patch-id can
+equal it; the replay over the named set is the same exactness test generalised to a set.
+
+Origin: lane-298 (HQ87 2026-10-10 16:5x Q89 ruling)
+Measured-effect: none - registration-gate tooling only, no engine code
+---
+ tools/arifi-sync/arifi_sync.py      | 73 ++++++++++++++++++++++++++++-
+ tools/arifi-sync/test_arifi_sync.py | 53 +++++++++++++++++++++
+ 2 files changed, 125 insertions(+), 1 deletion(-)
+
+diff --git a/tools/arifi-sync/arifi_sync.py b/tools/arifi-sync/arifi_sync.py
+index d740825e76..992506b427 100644
+--- a/tools/arifi-sync/arifi_sync.py
++++ b/tools/arifi-sync/arifi_sync.py
+@@ -2177,6 +2177,12 @@ def validate_protected_wins(repo: str, ref: str, cfg=None) -> list:
+     if cfg is not None:
+         problems.extend(baseline_boundary_problems(repo))
+         problems.extend(replay_provenance(repo, cfg)[0])
++        covered, baseline = covered_win_commits(repo), load_discovery_baseline(repo)
++        for w, r in reverted_on_line(repo, cfg, ref).items():
++            if w not in covered and w not in baseline and \
++                    _measured_effect_is_real(commit_trailers(repo, w)["Measured-effect"]):
++                say("REVERTED (%s by %s) %r - exact inverse on line, exempt from registration"
++                    % (w[:9], r[:9], gout(repo, "log", "-1", "--format=%s", w)[:70]))
+         for sha, subject, eff in unregistered_measured_wins(repo, cfg, ref):
+             problems.append(
+                 "UNREGISTERED measured win %s %r - it landed with `Measured-effect: %s` and is "
+@@ -2607,6 +2613,70 @@ def covered_win_commits(repo: str) -> set:
+     return covered
+ 
+ 
++_SHA_WORD = re.compile(r"\b[0-9a-f]{7,40}\b")
++
++
++def reverted_on_line(repo: str, cfg: dict, ref: str) -> dict:
++    """{W: R} for commits W in base..ref that a LATER commit R in base..ref reverts EXACTLY (HQ87 Q89).
++
++    R names the set S it reverts by sha in its message (one revert may undo several commits). The
++    proof is a replay, not a reading of the message: start from R^, apply the reverse of every
++    commit in S (newest first) and the result must equal R's tree on every path S or R touches,
++    the registry files (manifest, resolutions, baseline) and the generated series excepted -
++    those are bookkeeping that a revert legitimately rewrites around later entries. One line more
++    or less in R, or a reverse that does not apply, and nothing in S is exempt (fail-closed)."""
++    base = cfg["base"]["upstream_sha"]
++    order = gout(repo, "rev-list", "--reverse", "%s..%s" % (base, ref)).split()
++    pos = {s: i for i, s in enumerate(order)}
++    skip = {"tools/arifi-sync/" + n for n in (PROTECTED_WINS, PROTECTED_RESOLUTIONS, PROTECTED_BASELINE)}
++    series = series_pathspec(cfg)
++    bodies = {}
++    for rec in gout(repo, "log", "--format=%H%x00%B%x1e", "%s..%s" % (base, ref)).split("\x1e"):
++        if "\x00" in rec:
++            h, b = rec.split("\x00", 1)
++            bodies[h.strip()] = b
++    out = {}
++    for r in order:
++        named = []
++        for word in _SHA_WORD.findall(bodies.get(r, "")):
++            hits = [s for s in order[:pos[r]] if s.startswith(word)]
++            if len(hits) == 1 and hits[0] not in named:
++                named.append(hits[0])
++        if not named:
++            continue
++        named.sort(key=pos.get)
++        paths = set()
++        for c in named + [r]:
++            paths.update(gout(repo, "diff-tree", "-r", "--no-commit-id", "--name-only", c).split())
++        paths = sorted(p for p in paths if p not in skip and not (p + "/").startswith(series.rstrip("/") + "/"))
++        if not paths:
++            continue
++        env = dict(os.environ, GIT_INDEX_FILE=os.path.join(gout(repo, "rev-parse", "--absolute-git-dir"),
++                                                           "arifi-revert-%s.idx" % r[:12]))
++        ok = git(repo, "read-tree", r + "^", check=False, env=env)[0] == 0
++        for c in reversed(named):
++            if not ok:
++                break
++            patch = subprocess.run(["git", "-C", repo, "diff", "--binary", c + "^", c, "--"] + paths,
++                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
++            if patch.strip():
++                ok = subprocess.run(["git", "-C", repo, "apply", "-R", "--cached", "--whitespace=nowarn"],
++                                    input=patch, env=env, stdout=subprocess.PIPE,
++                                    stderr=subprocess.PIPE).returncode == 0
++        if ok:
++            tree = subprocess.run(["git", "-C", repo, "write-tree"], env=env, stdout=subprocess.PIPE,
++                                  stderr=subprocess.PIPE).stdout.decode().strip()
++            ok = bool(tree) and git(repo, "diff", "--quiet", tree, r, "--", *paths, check=False)[0] == 0
++        try:
++            os.remove(env["GIT_INDEX_FILE"])
++        except OSError:
++            pass
++        if ok:
++            for c in named:
++                out.setdefault(c, r)
++    return out
++
++
+ def unregistered_measured_wins(repo: str, cfg: dict, ref: str) -> list:
+     """The STRICT set: landed commits with a real `Measured-effect:` that no manifest entry covers
+     AND no baseline row dispositions. This is the single predicate `discover` prints and
+@@ -2620,9 +2690,10 @@ def unregistered_measured_wins(repo: str, cfg: dict, ref: str) -> list:
+     # and a one-to-one map. Rows that fail those checks map nothing and their commits stay in the
+     # set below, so a broken ledger cannot quiet the gate.
+     _, replayed = replay_provenance(repo, cfg)
++    reverted = reverted_on_line(repo, cfg, ref)
+     rows = []
+     for sha in gout(repo, "rev-list", "--reverse", "%s..%s" % (base, ref)).split():
+-        if sha in covered or sha in baseline or sha in replayed:
++        if sha in covered or sha in baseline or sha in replayed or sha in reverted:
+             continue
+         eff = commit_trailers(repo, sha)["Measured-effect"]
+         if _measured_effect_is_real(eff):
+diff --git a/tools/arifi-sync/test_arifi_sync.py b/tools/arifi-sync/test_arifi_sync.py
+index f242e8afbb..99a1561225 100644
+--- a/tools/arifi-sync/test_arifi_sync.py
++++ b/tools/arifi-sync/test_arifi_sync.py
+@@ -721,6 +721,59 @@ class StrictRegistrationTest(unittest.TestCase):
+         self.assertIn(landed, [r[0] for r in rows])
+ 
+ 
++class RevertedOnLineTest(unittest.TestCase):
++    """HQ87 Q89: a measured win that a later commit reverts EXACTLY is exempt, and says so."""
++    setUp, tearDown = StrictRegistrationTest.setUp, StrictRegistrationTest.tearDown
++    _validate = StrictRegistrationTest._validate
++
++    def _win(self, path, text, effect="-9.4% per dispatch, 8 launches"):
++        return self.r.commit("vulkan: measured win on " + path, {path: text}, effect=effect)
++
++    def _revert(self, names, files):
++        return self.r.commit("revert " + " ".join(n[:10] for n in names), files, effect="none")
++
++    def _unregistered(self):
++        return [p for p in self._validate() if "UNREGISTERED" in p]
++
++    def test_exact_revert_is_exempt_and_printed(self):
++        w = self._win("ggml/w.c", "int w(void){return 2;}\n")
++        git(self.r.path, "rm", "-q", "--", "ggml/w.c")
++        git(self.r.path, "commit", "-q", "-m",
++            "revert %s\n\nOrigin: ArifiLabs (native)\nMeasured-effect: none\n" % w[:10])
++        r = git(self.r.path, "rev-parse", "HEAD")
++        self.assertEqual({w: r}, A.reverted_on_line(self.r.path, self.r.cfg, "main"))
++        buf = io.StringIO()
++        with contextlib.redirect_stdout(buf):
++            self.assertEqual([], self._unregistered())
++        self.assertIn("REVERTED (%s by %s)" % (w[:9], r[:9]), buf.getvalue())
++
++    def test_one_revert_of_a_set_on_one_file_is_exempt(self):
++        self.r.write("ggml/s.c", "a\nb\nc\n")
++        git(self.r.path, "add", "--", "ggml/s.c")
++        git(self.r.path, "commit", "-q", "-m", "seed\n\nOrigin: ArifiLabs (native)\nMeasured-effect: none\n")
++        w1 = self._win("ggml/s.c", "a\nFAST1\nb\nc\n")
++        w2 = self._win("ggml/s.c", "a\nFAST1\nb\nFAST2\nc\n", effect="+3.1% decode")
++        self._revert([w1, w2], {"ggml/s.c": "a\nb\nc\n"})
++        self.assertEqual([], self._unregistered())
++
++    def test_RED_a_revert_with_one_line_difference_stays_unregistered(self):
++        self.r.write("ggml/s.c", "a\nb\nc\n")
++        git(self.r.path, "add", "--", "ggml/s.c")
++        git(self.r.path, "commit", "-q", "-m", "seed\n\nOrigin: ArifiLabs (native)\nMeasured-effect: none\n")
++        w = self._win("ggml/s.c", "a\nFAST\nb\nc\n")
++        self._revert([w], {"ggml/s.c": "a\nb\nc\nEXTRA\n"})
++        self.assertEqual({}, A.reverted_on_line(self.r.path, self.r.cfg, "main"))
++        self.assertTrue(any(w[:9] in p for p in self._unregistered()))
++
++    def test_RED_an_exact_inverse_that_does_not_name_the_win_stays_unregistered(self):
++        self.r.write("ggml/s.c", "a\n")
++        git(self.r.path, "add", "--", "ggml/s.c")
++        git(self.r.path, "commit", "-q", "-m", "seed\n\nOrigin: ArifiLabs (native)\nMeasured-effect: none\n")
++        w = self._win("ggml/s.c", "a\nFAST\n")
++        self.r.commit("cleanup", {"ggml/s.c": "a\n"}, effect="none")
++        self.assertTrue(any(w[:9] in p for p in self._unregistered()))
++
++
+ class BaselineBoundaryTest(unittest.TestCase):
+     """CHECKER-R3 residual, 2026-09-04: the baseline was closed to new shas BY CONVENTION only.
+ 

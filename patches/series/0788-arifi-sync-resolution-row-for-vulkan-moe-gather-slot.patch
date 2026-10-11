@@ -1,0 +1,50 @@
+From 5cbd215e1f809c388d8723698f72becf334b1257 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 02:18:51 -0400
+Subject: [PATCH] arifi-sync: resolution row for
+ vulkan-moe-gather-slot-major-matvec-id vs P17
+
+The P17 hunk (2aa70040d3) only adds a_offset % 4 == 0 to the aligned
+non-quant mat-vec guard; the slot-major gather win runs quant types only,
+for which is_aligned_nonquant is false. Row authored by HQ84 2026-10-09
+02:1x EDT from the lane-298 relaunch-93 read.
+
+Origin: lane-298 (resolution authored by HQ84)
+Measured-effect: NO RUNTIME EFFECT - metadata only; receipt cache/mtp-x1-lane/cells/p5-pw-check-incoming.txt
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../arifi-sync/protected-win-resolutions.json | 21 +++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/tools/arifi-sync/protected-win-resolutions.json b/tools/arifi-sync/protected-win-resolutions.json
+index d561eacc98..fdb27a35fc 100644
+--- a/tools/arifi-sync/protected-win-resolutions.json
++++ b/tools/arifi-sync/protected-win-resolutions.json
+@@ -1246,6 +1246,27 @@
+       ],
+       "decided_utc": "2026-10-06T01:30:00Z",
+       "decided_by": "HQ seat 80 (Opus 5.5), from lane-300 REPORT blocker table"
++    },
++    {
++      "win_id": "vulkan-moe-gather-slot-major-matvec-id",
++      "incoming": "0e7ed6ff914005119edbb7b9247d1d765aa68ad0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "upstream P17 (#29254) hunk in mul_mat_vec.comp compute_outputs: adds a_offset % 4 == 0 to is_aligned_nonquant (aligned NON-QUANT branch guard only)",
++        "ours": "win mechanism = MUL_MAT_ID gather pipelines for QUANT types (IQ3_S/IQ3_XXS/IQ4_NL/IQ2_S); its only anchor in this file, GGML_ARIFI_IQ4NL_BODY at line 31, is 238 lines from the hunk and byte-identical before/after (tools/p4_anchor_dist.py)",
++        "union": "is_aligned_nonquant is false for every quant gather type, so the win's code path is unchanged; both kept"
++      },
++      "quality": "upstream-x1 rg8 MUL_MAT_ID 144/144 OK, fusion 1267/1267 + 14/14 on the P14 tip that carries P17 (MUL_MAT_ID run TIMEOUT-at-cap, 0 FAIL); point4 re-gate greedy ids SAME on every row of fn/orn/q27/sx8 (cache/mtp-x1-lane/cells/pg-summary-p4.txt)",
++      "evidence": [
++        "cache/mtp-x1-lane/cells/p4-pwcheck-refused.txt",
++        "cache/mtp-x1-lane/cells/p4-pw-check-incoming.txt",
++        "cache/upstream-x1-lane/cells/rg8-summary.txt",
++        "cache/mtp-x1-lane/cells/pg-summary-p4.txt",
++        "commit:0e7ed6ff914005119edbb7b9247d1d765aa68ad0"
++      ],
++      "decided_utc": "2026-10-09T06:15:00Z",
++      "decided_by": "HQ84 2026-10-09 02:1x EDT (authored from lane-298 relaunch-93 read, QUESTIONS 'HQ84 (2026-10-09 02:1x EDT) - Q67 ruled'); written by lane 298",
++      "owed": "no"
+     }
+   ]
+ }

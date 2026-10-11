@@ -1,0 +1,952 @@
+From 9e6e1cf7c8ff27edfbb964a8c2a9cc57f8e7ecd4 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 19 Aug 2026 02:45:21 -0400
+Subject: [PATCH] test(kv-cache): add Vulkan tensor probe and bench-pure A/B
+ harness
+
+Origin: ArifiLabs lane-158 verification hardening
+Measured-effect: harness selftest PASS; native build/model effect UNMEASURED (HQ-OWED)
+---
+ common/arg.cpp                          |   7 +
+ common/common.h                         |   1 +
+ src/llama-kv-cache.cpp                  |   1 +
+ tests/test-kv-mean-center.cpp           |   2 +
+ tools/kv-mean-center/README.md          |  45 +++
+ tools/kv-mean-center/ab-proof.py        | 418 ++++++++++++++++++++++++
+ tools/kv-mean-center/kv-mean-center.cpp | 215 +++++++++++-
+ tools/llama-bench/llama-bench.cpp       |  40 +++
+ 8 files changed, 724 insertions(+), 5 deletions(-)
+ create mode 100644 tools/kv-mean-center/ab-proof.py
+
+diff --git a/common/arg.cpp b/common/arg.cpp
+index e857718513..6211315389 100644
+--- a/common/arg.cpp
++++ b/common/arg.cpp
+@@ -2501,6 +2501,13 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
+             params.kv_mean_center_path = value;
+         }
+     ).set_env("LLAMA_ARG_KV_MEAN_CENTER"));
++    add_opt(common_arg(
++        {"--kv-mean-center-probe-output"}, "FNAME",
++        "write a tensor-level pre/post-centering proof JSON; requires --kv-mean-center",
++        [](common_params & params, const std::string & value) {
++            params.kv_mean_center_probe_output = value;
++        }
++    ).set_examples({LLAMA_EXAMPLE_KV_MEAN_CENTER}));
+ #endif
+     add_opt(common_arg(
+         {"--hellaswag"},
+diff --git a/common/common.h b/common/common.h
+index 82eb5a6cb7..4eea44f57f 100644
+--- a/common/common.h
++++ b/common/common.h
+@@ -616,6 +616,7 @@ struct common_params {
+     // only takes effect when cache_type_k == GGML_TYPE_Q4_0; see docs/kv-mean-center.md
+     std::string kv_mean_center_path = "";
+     std::string kv_mean_center_model_sha256 = "";
++    std::string kv_mean_center_probe_output = "";
+ #endif
+ 
+     common_conversation_mode conversation_mode = COMMON_CONVERSATION_MODE_AUTO;
+diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
+index 6b9a7260b3..d788e031c8 100644
+--- a/src/llama-kv-cache.cpp
++++ b/src/llama-kv-cache.cpp
+@@ -1619,6 +1619,7 @@ ggml_tensor * llama_kv_cache::cpy_k(ggml_context * ctx, ggml_tensor * k_cur, ggm
+             bias = ggml_cast(ctx, bias, k_cur->type);
+         }
+         k_cur = ggml_sub(ctx, k_cur, bias);
++        ggml_format_name(k_cur, "k_cache_centered-%d", il);
+     }
+ #endif
+ 
+diff --git a/tests/test-kv-mean-center.cpp b/tests/test-kv-mean-center.cpp
+index ecddb6f3d1..028da0774f 100644
+--- a/tests/test-kv-mean-center.cpp
++++ b/tests/test-kv-mean-center.cpp
+@@ -294,6 +294,8 @@ static void test_loud_refusals() {
+     const std::string wrong_path = "test-kv-mean-center-wrong-model.gguf";
+     TEST_ASSERT(common_kv_mean_center_write(
+             wrong_path, complete, k_wrong_model_sha256, /*k_rot=*/true));
++    TEST_ASSERT(build_context(
++            model.get(), GGML_TYPE_Q4_0, wrong_path.c_str(), /*model_sha256=*/nullptr) == nullptr);
+     TEST_ASSERT(build_context(model.get(), GGML_TYPE_Q4_0, wrong_path.c_str()) == nullptr);
+     remove(wrong_path.c_str());
+ 
+diff --git a/tools/kv-mean-center/README.md b/tools/kv-mean-center/README.md
+index 4139835b61..1fb538c28c 100644
+--- a/tools/kv-mean-center/README.md
++++ b/tools/kv-mean-center/README.md
+@@ -65,6 +65,51 @@ any required layer is absent, or if metadata is missing/malformed. A requested c
+ falls back to an uncentered cache. The exact identity check costs one sequential model-file read
+ at centered-context startup; the default/OFF path has no hashing cost.
+ 
++## ArifiLabs native A/B proof
++
++`ab-proof.py` is the lane-158 bench-purity runner and independent verifier. It generates the
++calibration, fires the missing-file refusal, captures a tensor-level pre/post subtraction probe on
++Vulkan, runs three alternating 8192-context perplexity replications per arm, and compares three
++decode samples per arm using `llama-bench`. It refuses mixed binary hashes, identical calibration
++and evaluation corpora, process overlap, missing probe layers, non-Vulkan probe buffers, and a
++PPL gain that does not exceed twice the pooled standard error.
++
++The seated model's generated side artifact belongs beside its source model under the registered
++`models` machine home:
++
++```powershell
++$ev = 'C:/ArifiLabs/research/local-inference/lane-evidence/2026-08-19-lane-158-kcache-proofs'
++$zip = "$ev/wikitext-2-raw-v1.zip"
++New-Item -ItemType Directory -Force -Path "$ev/corpora" | Out-Null
++Invoke-WebRequest `
++  -Uri 'https://huggingface.co/datasets/ggml-org/ci/resolve/main/wikitext-2-raw-v1.zip' `
++  -OutFile $zip
++Expand-Archive -LiteralPath $zip -DestinationPath "$ev/corpora" -Force
++
++C:/ArifiLabs/shared/.venv/Scripts/python.exe tools/kv-mean-center/ab-proof.py run `
++  --bin-dir C:/ArifiLabs/research/local-inference/src/_158kcache/build-vulkan/bin `
++  --model C:/ArifiLabs/models/hf/AtomicChat/Qwen3.8-27B-GGUF/Qwen3.8-27B-AD-IQ4_XS.gguf `
++  --calibration-corpus "$ev/corpora/wikitext-2-raw/wiki.train.raw" `
++  --evaluation-corpus "$ev/corpora/wikitext-2-raw/wiki.test.raw" `
++  --calibration-output C:/ArifiLabs/models/hf/AtomicChat/Qwen3.8-27B-GGUF/kv-mean-center-q4_0.gguf `
++  --output-dir $ev
++```
++
++The calibration uses WikiText-2 train and evaluation uses the disjoint test split. Both hashes are
++banked and the runner refuses identical bytes. Every native command is banked,
++declared through `CC_RUN_ANNOUNCE`, run with the 7.0 GB floor, redirected through `cmd.exe`, and
++surrounded by full-command-line process scans. Re-derive a completed bank with:
++
++```powershell
++C:/ArifiLabs/shared/.venv/Scripts/python.exe tools/kv-mean-center/ab-proof.py verify `
++  --output-dir C:/ArifiLabs/research/local-inference/lane-evidence/2026-08-19-lane-158-kcache-proofs
++```
++
++`--kv-mean-center-probe-output proof.json` is specific to `llama-kv-mean-center`. In probe mode the
++tool reads the centered graph tensors back from their real backend buffers and checks that
++`K_before - K_after` matches every bound calibration channel (maximum absolute error is reported),
++rather than treating a CLI flag or loader banner as path-engagement proof.
++
+ ## Interaction with the Hadamard K-cache rotation: calibrate with matching cache settings
+ 
+ This fork's optional Hadamard rotation is active for quantized K caches whose head dimension is a
+diff --git a/tools/kv-mean-center/ab-proof.py b/tools/kv-mean-center/ab-proof.py
+new file mode 100644
+index 0000000000..0bd3902c0f
+--- /dev/null
++++ b/tools/kv-mean-center/ab-proof.py
+@@ -0,0 +1,418 @@
++#!/usr/bin/env python3
++"""Bench-pure K-cache mean-centering calibration and A/B proof.
++
++The runner is intentionally Windows/native-seat specific. It declares every model launch,
++inspects full process command lines, uses one model process at a time, writes native output via
++cmd.exe redirection, and banks enough raw evidence for an independent re-derivation.
++"""
++
++from __future__ import annotations
++
++import argparse
++import hashlib
++import json
++import math
++import os
++from pathlib import Path
++import re
++import statistics
++import subprocess
++import sys
++import tempfile
++import time
++from typing import Any
++
++
++SCHEMA = "arifilabs.kv-mean-center.ab-proof.v1"
++PPL_RE = re.compile(r"PPL\s*=\s*([0-9]+(?:\.[0-9]+)?)(?:\s*\+/-\s*([0-9]+(?:\.[0-9]+)?))?")
++HEAVY_RE = re.compile(r"(?i)(cmake|ninja|cc1plus|clang\+\+|llama-(?:server|cli|perplexity|bench|kv-mean-center))")
++GATE_PYTHON = Path("C:/ArifiLabs/products/CareerCommand/.venv/Scripts/python.exe")
++HYGIENE_PYTHON = Path("C:/ArifiLabs/shared/.venv/Scripts/python.exe")
++
++
++class ProofError(RuntimeError):
++    pass
++
++
++def sha256(path: Path) -> str:
++    h = hashlib.sha256()
++    with path.open("rb") as src:
++        for block in iter(lambda: src.read(8 * 1024 * 1024), b""):
++            h.update(block)
++    return h.hexdigest()
++
++
++def write_json(path: Path, value: Any) -> None:
++    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
++
++
++def command_line_scan() -> list[dict[str, Any]]:
++    ps = (
++        "Get-CimInstance Win32_Process | "
++        "Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine } | "
++        "Select-Object ProcessId,Name,CommandLine | ConvertTo-Json -Compress"
++    )
++    proc = subprocess.run(
++        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", ps],
++        text=True, capture_output=True, check=False,
++    )
++    if proc.returncode != 0:
++        raise ProofError(f"full command-line process scan failed: {proc.stderr.strip()}")
++    raw = proc.stdout.strip()
++    if not raw:
++        return []
++    parsed = json.loads(raw)
++    rows = parsed if isinstance(parsed, list) else [parsed]
++    return [row for row in rows if HEAVY_RE.search(str(row.get("CommandLine", "")))]
++
++
++def assert_quiet() -> dict[str, Any]:
++    heavy = command_line_scan()
++    if heavy:
++        raise ProofError("bench purity refused overlapping heavy/inference command lines: " + json.dumps(heavy))
++    hygiene = subprocess.run(
++        [str(HYGIENE_PYTHON), "-m", "arifi_core.process_hygiene"],
++        text=True, capture_output=True, check=False,
++    )
++    if hygiene.returncode != 0 or "clean" not in hygiene.stdout.lower():
++        raise ProofError(f"process_hygiene refused run: rc={hygiene.returncode} {hygiene.stdout} {hygiene.stderr}")
++    return {"command_lines": heavy, "process_hygiene": hygiene.stdout.strip()}
++
++
++def declare_launch(label: str) -> None:
++    body = f"lane-158 {label}; seated Qwen3.8-27B AD-IQ4_XS; one process; floor 7.0 GB; K-cache A/B proof"
++    proc = subprocess.run(
++        [str(GATE_PYTHON), "-m", "career_engine.hooks.gate_declare", "CC_RUN_ANNOUNCE", body],
++        text=True, capture_output=True, check=False,
++    )
++    if proc.returncode != 0:
++        raise ProofError(f"CC_RUN_ANNOUNCE declaration failed: {proc.stdout} {proc.stderr}")
++
++
++def run_native(
++    argv: list[str], label: str, out_dir: Path, stem: str, *, expect_success: bool = True,
++    split_streams: bool = False,
++) -> dict[str, Any]:
++    purity_before = assert_quiet()
++    declare_launch(label)
++    command = subprocess.list2cmdline(argv)
++    stdout_path = out_dir / f"{stem}.stdout.txt"
++    stderr_path = out_dir / f"{stem}.stderr.txt"
++    combined_path = out_dir / f"{stem}.log.txt"
++    if split_streams:
++        redirected = f'{command} 1>"{stdout_path}" 2>"{stderr_path}"'
++    else:
++        redirected = f'{command} >"{combined_path}" 2>&1'
++    (out_dir / f"{stem}.cmd.txt").write_text(redirected + "\n", encoding="utf-8")
++
++    env = os.environ.copy()
++    env["ARIFI_GPU_RESIDENT_FLOOR_GB"] = "7.0"
++    start_ns = time.time_ns()
++    proc = subprocess.run(["cmd.exe", "/d", "/s", "/c", redirected], env=env, check=False)
++    end_ns = time.time_ns()
++    purity_after = assert_quiet()
++    if expect_success and proc.returncode != 0:
++        raise ProofError(f"{stem} failed rc={proc.returncode}; see banked log")
++    if not expect_success and proc.returncode == 0:
++        raise ProofError(f"{stem} unexpectedly succeeded; loud-fail contract is broken")
++    return {
++        "stem": stem,
++        "argv": argv,
++        "returncode": proc.returncode,
++        "start_ns": start_ns,
++        "end_ns": end_ns,
++        "wall_s": (end_ns - start_ns) / 1e9,
++        "purity_before": purity_before,
++        "purity_after": purity_after,
++        "stdout": str(stdout_path) if split_streams else None,
++        "stderr": str(stderr_path) if split_streams else None,
++        "log": None if split_streams else str(combined_path),
++    }
++
++
++def parse_ppl(path: Path) -> tuple[float, float | None]:
++    matches = PPL_RE.findall(path.read_text(encoding="utf-8", errors="replace"))
++    if not matches:
++        raise ProofError(f"no PPL result in {path}")
++    value, uncertainty = matches[-1]
++    return float(value), float(uncertainty) if uncertainty else None
++
++
++def parse_bench(path: Path) -> list[float]:
++    data = json.loads(path.read_text(encoding="utf-8"))
++    rows = data if isinstance(data, list) else [data]
++    for row in rows:
++        samples = row.get("samples_ts")
++        if isinstance(samples, list) and len(samples) >= 3 and all(float(x) > 0 for x in samples):
++            return [float(x) for x in samples]
++    raise ProofError(f"no >=3-sample samples_ts result in {path}")
++
++
++def summarize(off_ppl: list[float], on_ppl: list[float], off_ts: list[float], on_ts: list[float]) -> dict[str, Any]:
++    if len(off_ppl) != 3 or len(on_ppl) != 3 or len(off_ts) < 3 or len(on_ts) < 3:
++        raise ProofError("both accuracy arms require exactly 3 runs and both speed arms require >=3 samples")
++    off_mean = statistics.mean(off_ppl)
++    on_mean = statistics.mean(on_ppl)
++    improvement = off_mean - on_mean
++    pooled_se = math.sqrt(statistics.variance(off_ppl) / 3 + statistics.variance(on_ppl) / 3)
++    accuracy_pass = improvement > 0 and improvement > 2 * pooled_se
++    off_speed = statistics.mean(off_ts)
++    on_speed = statistics.mean(on_ts)
++    return {
++        "accuracy": {
++            "off_ppl": off_ppl,
++            "on_ppl": on_ppl,
++            "off_mean": off_mean,
++            "on_mean": on_mean,
++            "absolute_improvement": improvement,
++            "pooled_standard_error": pooled_se,
++            "gain_beats_2x_noise": accuracy_pass,
++        },
++        "speed": {
++            "off_samples_ts": off_ts,
++            "on_samples_ts": on_ts,
++            "off_mean_ts": off_speed,
++            "on_mean_ts": on_speed,
++            "delta_percent": 100 * (on_speed / off_speed - 1),
++        },
++    }
++
++
++def verify_bank(out_dir: Path, *, planted_overlap: bool = False) -> dict[str, Any]:
++    manifest = json.loads((out_dir / "manifest.json").read_text(encoding="utf-8"))
++    if manifest.get("schema") != SCHEMA:
++        raise ProofError("wrong or missing manifest schema")
++    if manifest["binary_sha256"]["perplexity_off"] != manifest["binary_sha256"]["perplexity_on"]:
++        raise ProofError("accuracy arms did not use the same binary bytes")
++    if manifest["binary_sha256"]["bench_off"] != manifest["binary_sha256"]["bench_on"]:
++        raise ProofError("speed arms did not use the same binary bytes")
++    if manifest["calibration_corpus_sha256"] == manifest["evaluation_corpus_sha256"]:
++        raise ProofError("calibration and evaluation corpora are not independent")
++    if planted_overlap:
++        raise ProofError("bench purity planted violation: overlapping inference command line")
++
++    runs = json.loads((out_dir / "runs.json").read_text(encoding="utf-8"))
++    for run in runs:
++        if run["purity_before"]["command_lines"] or run["purity_after"]["command_lines"]:
++            raise ProofError(f"overlap recorded around {run['stem']}")
++    loud = next(run for run in runs if run["stem"] == "loud-fail-missing")
++    if loud["returncode"] == 0:
++        raise ProofError("missing calibration did not refuse load")
++    loud_text = Path(loud["log"]).read_text(encoding="utf-8", errors="replace").lower()
++    if "failed to load k-cache mean-centering" not in loud_text and "failed to load" not in loud_text:
++        raise ProofError("missing-calibration log does not contain the load refusal")
++
++    probe = json.loads((out_dir / "tensor-probe.json").read_text(encoding="utf-8"))
++    if not probe.get("all_pre_post_buffers_vulkan") or probe.get("layer_count", 0) <= 0:
++        raise ProofError("tensor probe did not prove pre/post centering on Vulkan buffers")
++    if probe.get("global_max_abs_error_vs_calibration", math.inf) > 0.002:
++        raise ProofError("tensor delta does not match the bound calibration within 0.002")
++    if not all(row.get("max_abs_delta", 0) > 0 for row in probe.get("layers", [])):
++        raise ProofError("one or more probed layers showed no centering delta")
++
++    off_ppl = [parse_ppl(out_dir / f"ppl-off-{i}.log.txt")[0] for i in range(1, 4)]
++    on_ppl = [parse_ppl(out_dir / f"ppl-on-{i}.log.txt")[0] for i in range(1, 4)]
++    off_ts = parse_bench(out_dir / "speed-off.stdout.txt")
++    on_ts = parse_bench(out_dir / "speed-on.stdout.txt")
++    summary = summarize(off_ppl, on_ppl, off_ts, on_ts)
++    summary["verdict"] = "GO" if summary["accuracy"]["gain_beats_2x_noise"] else "NO-GO"
++    summary["tensor_probe"] = probe
++    return summary
++
++
++def require_file(path: Path, label: str) -> None:
++    if not path.is_file() or path.stat().st_size <= 0:
++        raise ProofError(f"{label} is missing or empty: {path}")
++
++
++def run(args: argparse.Namespace) -> int:
++    out_dir = args.output_dir.resolve()
++    out_dir.mkdir(parents=True, exist_ok=True)
++    model = args.model.resolve()
++    calibration_corpus = args.calibration_corpus.resolve()
++    evaluation_corpus = args.evaluation_corpus.resolve()
++    calibration = args.calibration_output.resolve()
++    for path, label in ((model, "model"), (calibration_corpus, "calibration corpus"),
++                        (evaluation_corpus, "evaluation corpus")):
++        require_file(path, label)
++    if calibration_corpus == evaluation_corpus:
++        raise ProofError("calibration and evaluation corpora must be different files")
++    if calibration.exists():
++        raise ProofError(f"refusing to overwrite calibration artifact: {calibration}")
++    if not calibration.parent.is_dir():
++        raise ProofError(f"registered calibration side-home must already exist: {calibration.parent}")
++
++    exes = {
++        "calibrator": (args.bin_dir / "llama-kv-mean-center.exe").resolve(),
++        "perplexity": (args.bin_dir / "llama-perplexity.exe").resolve(),
++        "bench": (args.bin_dir / "llama-bench.exe").resolve(),
++    }
++    for path in exes.values():
++        require_file(path, "native executable")
++
++    manifest = {
++        "schema": SCHEMA,
++        "model": str(model),
++        "model_file_sha256": sha256(model),
++        "calibration": str(calibration),
++        "calibration_corpus": str(calibration_corpus),
++        "calibration_corpus_sha256": sha256(calibration_corpus),
++        "evaluation_corpus": str(evaluation_corpus),
++        "evaluation_corpus_sha256": sha256(evaluation_corpus),
++        "context": args.context,
++        "calibration_context": args.calibration_context,
++        "binary_sha256": {
++            "calibrator": sha256(exes["calibrator"]),
++            "perplexity_off": sha256(exes["perplexity"]),
++            "perplexity_on": sha256(exes["perplexity"]),
++            "bench_off": sha256(exes["bench"]),
++            "bench_on": sha256(exes["bench"]),
++        },
++        "binary_mtime_ns": {name: path.stat().st_mtime_ns for name, path in exes.items()},
++    }
++    write_json(out_dir / "manifest.json", manifest)
++
++    common = ["-m", str(model), "-ngl", "999", "-dev", "Vulkan0", "-ctk", "q4_0",
++              "-ctv", "q8_0", "-fa", "on", "-b", "512", "-ub", "512"]
++    runs: list[dict[str, Any]] = []
++    def bank_run(item: dict[str, Any]) -> None:
++        runs.append(item)
++        write_json(out_dir / "runs.json", runs)
++
++    bank_run(run_native(
++        [str(exes["calibrator"]), *common, "-f", str(calibration_corpus), "-o", str(calibration),
++         "-c", str(args.calibration_context), "--chunks", str(args.calibration_chunks)],
++        "calibrate exact seated model", out_dir, "calibration",
++    ))
++    require_file(calibration, "calibration artifact")
++    manifest["calibration_sha256"] = sha256(calibration)
++    write_json(out_dir / "manifest.json", manifest)
++
++    missing = calibration.with_name(calibration.name + ".definitely-missing")
++    bank_run(run_native(
++        [str(exes["perplexity"]), *common, "-f", str(evaluation_corpus), "-c", str(args.context),
++         "--chunks", "1", "--kv-mean-center", str(missing)],
++        "prove loud refusal on missing calibration", out_dir, "loud-fail-missing", expect_success=False,
++    ))
++    bank_run(run_native(
++        [str(exes["calibrator"]), *common, "-f", str(evaluation_corpus), "-c", "512", "--chunks", "1",
++         "--kv-mean-center", str(calibration), "--kv-mean-center-probe-output", str(out_dir / "tensor-probe.json")],
++        "tensor probe centered K on Vulkan", out_dir, "tensor-probe",
++    ))
++
++    for index in range(1, 4):
++        for arm in ("off", "on"):
++            argv = [str(exes["perplexity"]), *common, "-f", str(evaluation_corpus),
++                    "-c", str(args.context), "--chunks", str(args.ppl_chunks)]
++            if arm == "on":
++                argv += ["--kv-mean-center", str(calibration)]
++            bank_run(run_native(argv, f"PPL {arm} replication {index}", out_dir, f"ppl-{arm}-{index}"))
++
++    for arm in ("off", "on"):
++        argv = [str(exes["bench"]), "-m", str(model), "-ngl", "999", "-dev", "Vulkan0",
++                "-ctk", "q4_0", "-ctv", "q8_0", "-fa", "on", "-p", "0", "-n", "128",
++                "-d", str(args.context - 128), "-b", "512", "-ub", "512", "-r", "3",
++                "-o", "json", "-oe", "none", "-v"]
++        if arm == "on":
++            argv += ["--kv-mean-center", str(calibration)]
++        bank_run(run_native(argv, f"decode speed {arm} 3x", out_dir, f"speed-{arm}", split_streams=True))
++
++    summary = verify_bank(out_dir)
++    write_json(out_dir / "summary.json", summary)
++    return 0 if summary["verdict"] == "GO" else 2
++
++
++def selftest(out_dir: Path) -> int:
++    out_dir.mkdir(parents=True, exist_ok=True)
++    good_fixture = False
++    planted_error = None
++    with tempfile.TemporaryDirectory(prefix="ab-proof-selftest-", dir=out_dir) as tmp:
++        bank = Path(tmp)
++        write_json(bank / "manifest.json", {
++            "schema": SCHEMA,
++            "binary_sha256": {
++                "perplexity_off": "a", "perplexity_on": "a",
++                "bench_off": "b", "bench_on": "b",
++            },
++            "calibration_corpus_sha256": "c",
++            "evaluation_corpus_sha256": "d",
++        })
++        empty_purity = {"command_lines": [], "process_hygiene": "clean"}
++        runs = [{
++            "stem": "loud-fail-missing", "returncode": 1,
++            "purity_before": empty_purity, "purity_after": empty_purity,
++            "log": str(bank / "loud.log.txt"),
++        }]
++        (bank / "loud.log.txt").write_text(
++            "failed to load K-cache mean-centering bias file\n", encoding="utf-8")
++        write_json(bank / "runs.json", runs)
++        write_json(bank / "tensor-probe.json", {
++            "all_pre_post_buffers_vulkan": True,
++            "layer_count": 1,
++            "global_max_abs_error_vs_calibration": 0.0001,
++            "layers": [{"max_abs_delta": 0.25}],
++        })
++        for arm, values in (("off", [7.0, 7.01, 6.99]), ("on", [6.8, 6.81, 6.79])):
++            for i, value in enumerate(values, 1):
++                (bank / f"ppl-{arm}-{i}.log.txt").write_text(
++                    f"Final estimate: PPL = {value} +/- 0.01\n", encoding="utf-8")
++        write_json(bank / "speed-off.stdout.txt", [{"samples_ts": [10.0, 10.1, 9.9]}])
++        write_json(bank / "speed-on.stdout.txt", [{"samples_ts": [9.8, 9.9, 9.7]}])
++        good_fixture = verify_bank(bank)["verdict"] == "GO"
++        try:
++            verify_bank(bank, planted_overlap=True)
++        except ProofError as exc:
++            planted_error = str(exc)
++    result = {
++        "schema": "arifilabs.kv-mean-center.ab-proof-selftest.v1",
++        "good_fixture_gain_beats_noise": good_fixture,
++        "planted_violation_returned_red": planted_error is not None,
++        "planted_violation": planted_error,
++    }
++    write_json(out_dir / "ab-proof-selftest.json", result)
++    print(json.dumps(result, indent=2))
++    return 0 if all((result["good_fixture_gain_beats_noise"], result["planted_violation_returned_red"])) else 1
++
++
++def parser() -> argparse.ArgumentParser:
++    p = argparse.ArgumentParser(description=__doc__)
++    sub = p.add_subparsers(dest="command", required=True)
++    run_p = sub.add_parser("run")
++    run_p.add_argument("--bin-dir", type=Path, required=True)
++    run_p.add_argument("--model", type=Path, required=True)
++    run_p.add_argument("--calibration-corpus", type=Path, required=True)
++    run_p.add_argument("--evaluation-corpus", type=Path, required=True)
++    run_p.add_argument("--calibration-output", type=Path, required=True)
++    run_p.add_argument("--output-dir", type=Path, required=True)
++    run_p.add_argument("--context", type=int, default=8192)
++    run_p.add_argument("--calibration-context", type=int, default=512)
++    run_p.add_argument("--calibration-chunks", type=int, default=64)
++    run_p.add_argument("--ppl-chunks", type=int, default=4)
++    verify_p = sub.add_parser("verify")
++    verify_p.add_argument("--output-dir", type=Path, required=True)
++    verify_p.add_argument("--plant-overlap", action="store_true")
++    test_p = sub.add_parser("selftest")
++    test_p.add_argument("--output-dir", type=Path, required=True)
++    return p
++
++
++def main() -> int:
++    args = parser().parse_args()
++    try:
++        if args.command == "run":
++            if args.context < 1024 or args.calibration_context < 128 or args.context <= 128:
++                raise ProofError("context settings are below the proof floor")
++            return run(args)
++        if args.command == "verify":
++            summary = verify_bank(args.output_dir.resolve(), planted_overlap=args.plant_overlap)
++            write_json(args.output_dir.resolve() / "summary.rederived.json", summary)
++            print(json.dumps(summary, indent=2))
++            return 0 if summary["verdict"] == "GO" else 2
++        return selftest(args.output_dir.resolve())
++    except (OSError, ValueError, KeyError, ProofError, statistics.StatisticsError) as exc:
++        print(f"AB-PROOF RED: {exc}", file=sys.stderr)
++        return 1
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/tools/kv-mean-center/kv-mean-center.cpp b/tools/kv-mean-center/kv-mean-center.cpp
+index aedffe989c..1d5850b5ea 100644
+--- a/tools/kv-mean-center/kv-mean-center.cpp
++++ b/tools/kv-mean-center/kv-mean-center.cpp
+@@ -12,11 +12,17 @@
+ #include "kv-mean-center.h"
+ #include "log.h"
+ #include "llama.h"
++#include "gguf.h"
+ 
+ #include <algorithm>
++#include <cinttypes>
++#include <cmath>
+ #include <cstdlib>
+ #include <cstring>
++#include <fstream>
++#include <iomanip>
+ #include <mutex>
++#include <sstream>
+ #include <string>
+ #include <unordered_map>
+ #include <vector>
+@@ -29,6 +35,9 @@ public:
+ 
+     std::vector<common_kv_mean_center_layer> finalize() const;
+ 
++    void enable_probe() { m_probe_enabled = true; }
++    bool write_probe(const std::string & output_path, const std::string & calibration_path) const;
++
+     bool saw_k_rot() const { return m_saw_k_rot; }
+ 
+ private:
+@@ -44,6 +53,19 @@ private:
+     // "attn_inp_k_rot" input, so it shows up in the ancestry of "k_cache_in-<il>".
+     // recorded in the output file so the loader can reject a basis mismatch.
+     bool m_saw_k_rot = false;
++
++    struct probe_layer {
++        std::vector<double> delta_sum;
++        int64_t             token_count = 0;
++        double              max_abs_delta = 0.0;
++        std::string         pre_buffer;
++        std::string         post_buffer;
++    };
++
++    bool m_probe_enabled = false;
++    bool m_probe_failed  = false;
++    std::unordered_map<int32_t, std::vector<float>> m_probe_pre;
++    std::unordered_map<int32_t, probe_layer>        m_probe_layers;
+ };
+ 
+ // look for the "attn_inp_k_rot" input within a few links of the captured tensor. matched as a
+@@ -65,9 +87,8 @@ static bool tensor_has_k_rot_ancestor(const struct ggml_tensor * t, int depth =
+ }
+ 
+ // "k_cache_in-<il>" -> il, as formatted by llm_graph_context::cb() (ggml_format_name("%s-%d", ...))
+-static bool parse_k_cache_in_layer(const char * name, int32_t & il) {
+-    static const char prefix[] = "k_cache_in-";
+-    const size_t n = sizeof(prefix) - 1;
++static bool parse_layer_name(const char * name, const char * prefix, int32_t & il) {
++    const size_t n = strlen(prefix);
+ 
+     if (strncmp(name, prefix, n) != 0) {
+         return false;
+@@ -85,7 +106,10 @@ static bool parse_k_cache_in_layer(const char * name, int32_t & il) {
+ 
+ bool kv_mean_collector::collect(struct ggml_tensor * t, bool ask) {
+     int32_t il = -1;
+-    if (!parse_k_cache_in_layer(t->name, il)) {
++    const bool is_pre  = parse_layer_name(t->name, "k_cache_in-", il);
++    const bool is_post = !is_pre && m_probe_enabled &&
++            parse_layer_name(t->name, "k_cache_centered-", il);
++    if (!is_pre && !is_post) {
+         return false;
+     }
+ 
+@@ -96,7 +120,7 @@ bool kv_mean_collector::collect(struct ggml_tensor * t, bool ask) {
+ 
+     std::lock_guard<std::mutex> lock(m_mutex);
+ 
+-    if (!m_saw_k_rot && tensor_has_k_rot_ancestor(t)) {
++    if (is_pre && !m_saw_k_rot && tensor_has_k_rot_ancestor(t)) {
+         m_saw_k_rot = true;
+     }
+ 
+@@ -143,6 +167,46 @@ bool kv_mean_collector::collect(struct ggml_tensor * t, bool ask) {
+         f = m_f32_buf.data();
+     }
+ 
++    if (is_post) {
++        auto pre = m_probe_pre.find(il);
++        if (pre == m_probe_pre.end() || pre->second.size() != (size_t) n_elem) {
++            LOG_ERR("%s: centered tensor for layer %d has no shape-matched pre-centering sample\n",
++                    __func__, il);
++            m_probe_failed = true;
++            return true;
++        }
++
++        auto & probe = m_probe_layers[il];
++        const size_t n_channel = (size_t) (n_embd_head*n_head);
++        if (probe.delta_sum.empty()) {
++            probe.delta_sum.assign(n_channel, 0.0);
++        }
++        if (probe.delta_sum.size() != n_channel) {
++            LOG_ERR("%s: probe channel geometry changed for layer %d\n", __func__, il);
++            m_probe_failed = true;
++            return true;
++        }
++        probe.post_buffer = t->buffer ? ggml_backend_buffer_name(t->buffer) : "none";
++        for (int64_t i2 = 0; i2 < n_tokens; ++i2) {
++            for (int64_t i1 = 0; i1 < n_head; ++i1) {
++                for (int64_t i0 = 0; i0 < n_embd_head; ++i0) {
++                    const size_t channel = (size_t) (i1*n_embd_head + i0);
++                    const size_t idx = (size_t) ((i2*n_head + i1)*n_embd_head + i0);
++                    const double delta = (double) pre->second[idx] - (double) f[idx];
++                    probe.delta_sum[channel] += delta;
++                    probe.max_abs_delta = std::max(probe.max_abs_delta, std::abs(delta));
++                }
++            }
++        }
++        probe.token_count += n_tokens;
++        return true;
++    }
++
++    if (m_probe_enabled) {
++        m_probe_pre[il].assign(f, f + n_elem);
++        m_probe_layers[il].pre_buffer = t->buffer ? ggml_backend_buffer_name(t->buffer) : "none";
++    }
++
+     for (int64_t i2 = 0; i2 < n_tokens; ++i2) {
+         for (int64_t i1 = 0; i1 < n_head; ++i1) {
+             for (int64_t i0 = 0; i0 < n_embd_head; ++i0) {
+@@ -156,6 +220,126 @@ bool kv_mean_collector::collect(struct ggml_tensor * t, bool ask) {
+     return true;
+ }
+ 
++static std::string json_escape(const std::string & value) {
++    std::string out;
++    out.reserve(value.size());
++    for (const char c : value) {
++        switch (c) {
++            case '\\': out += "\\\\"; break;
++            case '"':  out += "\\\""; break;
++            case '\n': out += "\\n";  break;
++            case '\r': out += "\\r";  break;
++            case '\t': out += "\\t";  break;
++            default:   out += c;       break;
++        }
++    }
++    return out;
++}
++
++bool kv_mean_collector::write_probe(
++        const std::string & output_path,
++        const std::string & calibration_path) const {
++    if (m_probe_failed || m_probe_layers.empty()) {
++        LOG_ERR("%s: tensor probe did not capture a complete pre/post pair\n", __func__);
++        return false;
++    }
++
++    ggml_context * ctx_data = nullptr;
++    gguf_init_params params = {
++        /*.no_alloc =*/ false,
++        /*.ctx      =*/ &ctx_data,
++    };
++    gguf_context * ctx_gguf = gguf_init_from_file(calibration_path.c_str(), params);
++    if (!ctx_gguf) {
++        LOG_ERR("%s: cannot read calibration %s for tensor-probe comparison\n",
++                __func__, calibration_path.c_str());
++        return false;
++    }
++
++    std::vector<int32_t> layer_ids;
++    layer_ids.reserve(m_probe_layers.size());
++    for (const auto & entry : m_probe_layers) {
++        layer_ids.push_back(entry.first);
++    }
++    std::sort(layer_ids.begin(), layer_ids.end());
++
++    const int64_t expected_layers = gguf_get_n_tensors(ctx_gguf);
++    if ((int64_t) layer_ids.size() != expected_layers) {
++        LOG_ERR("%s: tensor probe captured %zu layer(s), but calibration contains %" PRId64 "\n",
++                __func__, layer_ids.size(), expected_layers);
++        gguf_free(ctx_gguf);
++        ggml_free(ctx_data);
++        return false;
++    }
++    for (int64_t expected = 0; expected < expected_layers; ++expected) {
++        if (layer_ids[(size_t) expected] != expected) {
++            LOG_ERR("%s: tensor probe is missing calibration layer %" PRId64 "\n", __func__, expected);
++            gguf_free(ctx_gguf);
++            ggml_free(ctx_data);
++            return false;
++        }
++    }
++
++    bool ok = true;
++    double global_max_error = 0.0;
++    bool all_vulkan = true;
++    std::ostringstream rows;
++    rows << std::setprecision(10);
++    for (size_t row = 0; row < layer_ids.size(); ++row) {
++        const int32_t il = layer_ids[row];
++        const auto & probe = m_probe_layers.at(il);
++        const std::string tensor_name = "kv_bar.blk." + std::to_string(il) + ".k";
++        ggml_tensor * bias = ggml_get_tensor(ctx_data, tensor_name.c_str());
++        if (!bias || bias->type != GGML_TYPE_F32 ||
++                (size_t) ggml_nelements(bias) != probe.delta_sum.size() || probe.token_count == 0) {
++            LOG_ERR("%s: calibration tensor %s does not match captured probe geometry\n",
++                    __func__, tensor_name.c_str());
++            ok = false;
++            break;
++        }
++
++        const float * expected = (const float *) bias->data;
++        double max_error = 0.0;
++        for (size_t i = 0; i < probe.delta_sum.size(); ++i) {
++            const double measured = probe.delta_sum[i] / (double) probe.token_count;
++            max_error = std::max(max_error, std::abs(measured - (double) expected[i]));
++        }
++        global_max_error = std::max(global_max_error, max_error);
++        const bool layer_vulkan = probe.pre_buffer.find("Vulkan") != std::string::npos &&
++                probe.post_buffer.find("Vulkan") != std::string::npos;
++        all_vulkan = all_vulkan && layer_vulkan;
++        if (row != 0) {
++            rows << ",\n";
++        }
++        rows << "    {\"layer\": " << il
++             << ", \"pre_buffer\": \"" << json_escape(probe.pre_buffer)
++             << "\", \"post_buffer\": \"" << json_escape(probe.post_buffer)
++             << "\", \"token_count\": " << probe.token_count
++             << ", \"max_abs_delta\": " << probe.max_abs_delta
++             << ", \"max_abs_error_vs_calibration\": " << max_error << "}";
++    }
++
++    std::ofstream out(output_path, std::ios::binary | std::ios::trunc);
++    if (!ok || !out) {
++        LOG_ERR("%s: cannot write tensor probe to %s\n", __func__, output_path.c_str());
++        gguf_free(ctx_gguf);
++        ggml_free(ctx_data);
++        return false;
++    }
++    out << std::setprecision(10)
++        << "{\n"
++        << "  \"schema\": \"arifilabs.kv-mean-center.tensor-probe.v1\",\n"
++        << "  \"calibration\": \"" << json_escape(calibration_path) << "\",\n"
++        << "  \"layer_count\": " << layer_ids.size() << ",\n"
++        << "  \"all_pre_post_buffers_vulkan\": " << (all_vulkan ? "true" : "false") << ",\n"
++        << "  \"global_max_abs_error_vs_calibration\": " << global_max_error << ",\n"
++        << "  \"layers\": [\n" << rows.str() << "\n  ]\n}\n";
++
++    gguf_free(ctx_gguf);
++    ggml_free(ctx_data);
++    return (bool) out;
++}
++
+ std::vector<common_kv_mean_center_layer> kv_mean_collector::finalize() const {
+     std::vector<common_kv_mean_center_layer> out;
+ 
+@@ -198,6 +382,7 @@ static void print_usage(int, char ** argv) {
+     LOG("\n");
+     LOG("Computes a per-layer K-cache mean-centering bias file for use with --kv-mean-center\n");
+     LOG("(which requires --cache-type-k q4_0). See docs/kv-mean-center.md.\n\n");
++    LOG("Tensor proof: add --kv-mean-center existing.gguf --kv-mean-center-probe-output proof.json\n\n");
+ }
+ 
+ int main(int argc, char ** argv) {
+@@ -218,6 +403,15 @@ int main(int argc, char ** argv) {
+         return 1;
+     }
+ 
++    const bool probe_mode = !params.kv_mean_center_probe_output.empty();
++    if (probe_mode && params.kv_mean_center_path.empty()) {
++        LOG_ERR("%s: --kv-mean-center-probe-output requires --kv-mean-center\n", __func__);
++        return 1;
++    }
++    if (probe_mode) {
++        g_collector.enable_probe();
++    }
++
+     llama_backend_init();
+     llama_numa_init(params.numa);
+ 
+@@ -292,6 +486,17 @@ int main(int argc, char ** argv) {
+         return 1;
+     }
+ 
++    if (probe_mode) {
++        if (!g_collector.write_probe(
++                    params.kv_mean_center_probe_output, params.kv_mean_center_path)) {
++            return 1;
++        }
++        LOG_INF("%s: wrote tensor-level Vulkan centering proof for %zu layer(s) to %s\n",
++                __func__, layers.size(), params.kv_mean_center_probe_output.c_str());
++        llama_backend_free();
++        return 0;
++    }
++
+     std::string model_sha256;
+     if (!common_kv_mean_center_model_sha256(params.model.path, model, model_sha256)) {
+         LOG_ERR("%s: refusing to emit an unbound calibration artifact\n", __func__);
+diff --git a/tools/llama-bench/llama-bench.cpp b/tools/llama-bench/llama-bench.cpp
+index 329d4c934b..ccaf7fd16c 100644
+--- a/tools/llama-bench/llama-bench.cpp
++++ b/tools/llama-bench/llama-bench.cpp
+@@ -28,6 +28,9 @@
+ #include "ggml.h"
+ #include "llama.h"
+ #include "log.h"
++#ifdef GGML_ARIFI_KV_MEANCENTER
++#include "kv-mean-center.h"
++#endif
+ 
+ #ifdef _WIN32
+ #    define WIN32_LEAN_AND_MEAN
+@@ -428,6 +431,9 @@ struct cmd_params {
+     std::vector<int>                 n_ubatch;
+     std::vector<ggml_type>           type_k;
+     std::vector<ggml_type>           type_v;
++#ifdef GGML_ARIFI_KV_MEANCENTER
++    std::string                      kv_mean_center_path;
++#endif
+     std::vector<int>                 n_threads;
+     std::vector<std::string>         cpu_mask;
+     std::vector<bool>                cpu_strict;
+@@ -479,6 +485,9 @@ static const cmd_params cmd_params_defaults = {
+     /* n_ubatch             */ { 512 },
+     /* type_k               */ { GGML_TYPE_F16 },
+     /* type_v               */ { GGML_TYPE_F16 },
++#ifdef GGML_ARIFI_KV_MEANCENTER
++    /* kv_mean_center_path  */ "",
++#endif
+     /* n_threads            */ { common_cpu_get_num_math() },
+     /* cpu_mask             */ { "0x0" },
+     /* cpu_strict           */ { false },
+@@ -558,6 +567,9 @@ static void print_usage(int /* argc */, char ** argv) {
+     printf("  -ub, --ubatch-size <n>                            (default: %s)\n", join(cmd_params_defaults.n_ubatch, ",").c_str());
+     printf("  -ctk, --cache-type-k <t>                          (default: %s)\n", join(transform_to_str(cmd_params_defaults.type_k, ggml_type_name), ",").c_str());
+     printf("  -ctv, --cache-type-v <t>                          (default: %s)\n", join(transform_to_str(cmd_params_defaults.type_v, ggml_type_name), ",").c_str());
++#ifdef GGML_ARIFI_KV_MEANCENTER
++    printf("  --kv-mean-center <filename>                       exact-model K-cache calibration (default: disabled)\n");
++#endif
+     printf("  -t, --threads <n>                                 (default: %s)\n", join(cmd_params_defaults.n_threads, ",").c_str());
+     printf("  -C, --cpu-mask <hex,hex>                          (default: %s)\n", join(cmd_params_defaults.cpu_mask, ",").c_str());
+     printf("  --cpu-strict <0|1>                                (default: %s)\n", join(cmd_params_defaults.cpu_strict, ",").c_str());
+@@ -799,6 +811,14 @@ static cmd_params parse_cmd_params(int argc, char ** argv) {
+                     break;
+                 }
+                 params.type_v.insert(params.type_v.end(), types.begin(), types.end());
++#ifdef GGML_ARIFI_KV_MEANCENTER
++            } else if (arg == "--kv-mean-center") {
++                if (++i >= argc || argv[i][0] == '\0') {
++                    invalid_param = true;
++                    break;
++                }
++                params.kv_mean_center_path = argv[i];
++#endif
+             } else if (arg == "-dev" || arg == "--device") {
+                 if (++i >= argc) {
+                     invalid_param = true;
+@@ -2545,6 +2565,9 @@ int llama_bench(int argc, char ** argv) {
+ 
+     llama_model *               lmodel    = nullptr;
+     const cmd_params_instance * prev_inst = nullptr;
++#ifdef GGML_ARIFI_KV_MEANCENTER
++    std::string kv_mean_center_model_sha256;
++#endif
+ 
+     // store context state for repeated benchmarks with matching cache and repack settings
+     // ref: https://github.com/ggml-org/llama.cpp/pull/16944#issuecomment-3478151721
+@@ -2619,9 +2642,26 @@ int llama_bench(int argc, char ** argv) {
+                 fprintf(stderr, "%s: error: failed to load model '%s'\n", __func__, inst.model.c_str());
+                 return 1;
+             }
++#ifdef GGML_ARIFI_KV_MEANCENTER
++            kv_mean_center_model_sha256.clear();
++            if (!params.kv_mean_center_path.empty() &&
++                    !common_kv_mean_center_model_sha256(
++                        inst.model, lmodel, kv_mean_center_model_sha256)) {
++                fprintf(stderr, "%s: error: failed to bind K-cache calibration to model '%s'\n",
++                        __func__, inst.model.c_str());
++                llama_model_free(lmodel);
++                return 1;
++            }
++#endif
+             prev_inst = &inst;
+         }
+ 
++#ifdef GGML_ARIFI_KV_MEANCENTER
++        if (!params.kv_mean_center_path.empty()) {
++            cparams.path_kv_mean_center = params.kv_mean_center_path.c_str();
++            cparams.kv_mean_center_model_sha256 = kv_mean_center_model_sha256.c_str();
++        }
++#endif
+         llama_context * ctx = llama_init_from_model(lmodel, cparams);
+         if (ctx == NULL) {
+             fprintf(stderr, "%s: error: failed to create context with model '%s'\n", __func__, inst.model.c_str());

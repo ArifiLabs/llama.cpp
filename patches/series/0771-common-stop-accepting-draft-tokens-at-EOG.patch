@@ -1,0 +1,61 @@
+From 91cc6dcfb7e863a0b5c7e5d5486f09a5994657d4 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 19:40:22 -0400
+Subject: [PATCH] common : stop accepting draft tokens at EOG
+
+A drafted EOG that the target confirms ends the turn, but the verifier kept accepting the draft tokens after
+it. They are never output, yet they stay in the context, so the next turn (hybrid models: after a checkpoint
+restore) re-processes the whole previous answer. Applied to both verify overloads: upstream's greedy one and
+our maximal-coupling (dists) overload, which upstream does not have. A trailing EOG (last draft position) is
+still accepted, because on replay the last token comes from the target.
+
+Taken-from: ggml-org/llama.cpp@d280808f5d (#29638)
+Measured-effect: CORRECTNESS ONLY, SPEED UNMEASURED - test-spec-accept-eog RED on 88081ccb8c (2 tokens accepted per overload), GREEN here (1); the served 2-turn replay effect is not measured.
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ common/sampling.cpp | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/common/sampling.cpp b/common/sampling.cpp
+index da8bdc1b11..6f6a36d044 100644
+--- a/common/sampling.cpp
++++ b/common/sampling.cpp
+@@ -695,6 +695,8 @@ std::vector<llama_token> common_sampler_sample_and_accept_n(struct common_sample
+     std::vector<llama_token> result;
+     result.reserve(idxs.size());
+ 
++    const llama_vocab * vocab = llama_model_get_vocab(llama_get_model(ctx));
++
+     size_t i = 0;
+     for (; i < draft.size(); i++) {
+         const llama_token id = common_sampler_sample(gsmpl, ctx, idxs[i], grammar_first);
+@@ -703,7 +705,9 @@ std::vector<llama_token> common_sampler_sample_and_accept_n(struct common_sample
+ 
+         result.push_back(id);
+ 
+-        if (draft[i] != id) {
++        // do not accept draft tokens after an EOG - they are not output but would stay in the context
++        // on replay the last token is from the target and can be EOG, so a trailing EOG is still accepted
++        if (draft[i] != id || (llama_vocab_is_eog(vocab, id) && i + 1 < draft.size())) {
+             break;
+         }
+     }
+@@ -732,6 +736,8 @@ std::vector<llama_token> common_sampler_sample_and_accept_n(
+     std::vector<llama_token> result;
+     result.reserve(idxs.size());
+ 
++    const llama_vocab * vocab = llama_model_get_vocab(llama_get_model(ctx));
++
+     std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
+     size_t i = 0;
+     for (; i < draft.size(); ++i) {
+@@ -763,6 +769,9 @@ std::vector<llama_token> common_sampler_sample_and_accept_n(
+         if (q_draft > 0.0f && uniform(gsmpl->speculative_rng) * q_draft <= p_draft) {
+             common_sampler_accept(gsmpl, draft[i], true);
+             result.push_back(draft[i]);
++            if (llama_vocab_is_eog(vocab, draft[i]) && i + 1 < draft.size()) {
++                break; // same EOG stop as the greedy overload (#29638)
++            }
+             continue;
+         }
+ 

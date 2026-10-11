@@ -1,0 +1,53 @@
+From 5c747ded24eb6a53e85ef973e6ae890d3018ccc7 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 10 Oct 2026 11:00:44 -0400
+Subject: [PATCH] lane-302: register lever 13 IQ2_S gather body 6 as a
+ protected win (vulkan-moe-gather-iq2s-body6-const-grid)
+
+Picked onto lane-298/v0132 by lane 298 relaunch-115 from lane 302's 8379412f0e; "commit"/"also_commits" re-keyed to the picked shas db540a4c36 / 63cba090b1 (were 20aed36bcc / 74fbe028b8). The entry's effect is lever 13's: cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt.
+
+Origin: lane-302
+Measured-effect: UNMEASURED (manifest bookkeeping, no code)
+---
+ tools/arifi-sync/protected-wins.json | 28 ++++++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/tools/arifi-sync/protected-wins.json b/tools/arifi-sync/protected-wins.json
+index 270b8dba00..c92262b52d 100644
+--- a/tools/arifi-sync/protected-wins.json
++++ b/tools/arifi-sync/protected-wins.json
+@@ -2525,6 +2525,34 @@
+       "workload": "Qwen3.8-Flash-Next qwen4exp IQ3_S serve file, MTP dven40k + ngram-mod, verify widths 9..64 (hc bf16 MUL_MAT), AMD Radeon 890M (RDNA3.5), llama-server on the v0.1.3.2 rc (c21f0689d0).",
+       "measured_effect": "Cell AG served ABBA (D1 S1 S2 D2 D3 S3), 5 wide prompts: sampled (temp 0.7, 4 seeds) pooled 46.21 -> 47.58 t/s +2.97%, greedy 35.52 -> 36.90 t/s +3.88%, all wide +3.19% (pairs +3.66/+2.74/+3.17); acceptance identical. Sensitivity with s2-short (49-wide) pooled in: +2.66%, -0.15 pp. s2-short alone -2.0%, -3.38 pp (one trajectory). Narrow (width 4) prompts tie.",
+       "valid_conditions": "Vulkan dense MUL_MAT (not _ID), n < the tile's N, K large enough that the stock split_k rule fires; GGML_ARIFI_MM_SPLITK_SMALLN unset or 1."
++    },
++    {
++      "id": "vulkan-moe-gather-iq2s-body6-const-grid",
++      "status": "active",
++      "_registered": "2026-10-10, lane-302 relaunch-66 (Opus 5.5). Default ON (GGML_ARIFI_IQ2S_BODY unset = 6) after cell AI WIN.",
++      "mechanism": "mul_mat_vec_iq2_s.comp spec constant 3 on the IQ2_S MUL_MAT_ID gather pipeline: body 6 = body 5 math (int8 packed sign) with the grid read from the global const table iq2s_grid_const[qs] instead of the per-workgroup 8 KB LDS copy, so the LDS init and its barrier disappear. Same table values, same fma order: byte-identical to body 5. RGP (cell AH): LDS 8192 -> 0 B, LDS instr 8000 -> 0, total instr -8.3%, occupancy unchanged 4/16 (VGPR 115-bound), n4 dispatch 399.6 -> 357.1 us. GGML_ARIFI_IQ2S_BODY=5 = the body 5 off-ramp (vulkan-moe-gather-iq2s-body5 stays registered); 7 = planted wrong arm (grid index qs ^ 1), test only. Idea source: project-maya #19 docs/AMD_EXPERT_KERNELS.md (read only, no code taken).",
++      "commit": "ece2051b8ca96527893aff7da04f9acbe834b997",
++      "also_commits": [
++        "7b0bfb6b8fc455886c3cf61ba3885366a94ee442"
++      ],
++      "protected_paths": [
++        "ggml/src/ggml-vulkan/ggml-vulkan.cpp",
++        "ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq2_s.comp"
++      ],
++      "anchors": [
++        "GGML_ARIFI_IQ2S_BODY",
++        "ARIFI_IQ2S_BODY == 6"
++      ],
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-RED.txt",
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-state.json",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt"
++      ],
++      "quality_gate": "cell AH: test-backend-ops MUL_MAT_ID served shapes 5 types, body 5 42/0, body 6 42/0, planted body 7 9 FAIL on iq2_s; harness IDENT 18/18 vs g0, plant 5/5 DIFF; scratchMem 0. Cell AI: arm proof 17/17, served planted RED (body 7) fired 2/2 narrow prompts (ids first diff 26/29), greedy + sampled ids identical on every request, OFF proof clean.",
++      "workload": "Qwen3.8-Flash-Next qwen4exp IQ3_S serve file, IQ2_S gate/up experts, 512 experts top-10, MTP verify width 4 (dven40k, draft-mtp + ngram-mod), AMD Radeon 890M (RDNA3.5), llama-server on v0.1.3.2 rc + lever 12.",
++      "measured_effect": "Cell AI served, same binary, ABBA x2 (D=BODY 5, S=unset): verify width 4, greedy + sampled (temp 0.7, seed 1234) pooled 19.89 -> 20.06 t/s +0.87% (pairs +0.33/+1.36/+1.13/+0.66), acceptance identical 0.7915. Plain decode (n=1, idg never taken) 11.75 -> 11.76 t/s +0.1% (costs nothing). Wide (65) prompts no regression.",
++      "valid_conditions": "Vulkan MUL_MAT_ID IQ2_S on the lane-302 gather (idg) pipeline, nei1 > 1 (verify widths 2..8); GGML_ARIFI_IQ2S_BODY unset or 6."
+     }
+   ],
+   "_rekeyed_pre_rebase_to_x1i": "Re-keyed 2026-10-06 (release-prep HQ82) from the pre-rebase chain (reachable only through the fork tag arifi-pre-rebase-e86ca0289, which does not ship) to the rebased commit on the x1i line. Map: the checked replay-provenance.json row when one exists, else a unique git patch-id --stable match. The prior key is kept in *_pre_rebase. No row was added, removed or re-judged."

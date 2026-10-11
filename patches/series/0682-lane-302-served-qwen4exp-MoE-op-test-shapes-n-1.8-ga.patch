@@ -1,0 +1,57 @@
+From 6fb0b1e219d02abba8a1a1531238de63ba68ee04 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 10:36:18 -0400
+Subject: [PATCH] lane-302: served qwen4exp MoE op-test shapes n=1..8 + gather
+ plant guard
+
+test-backend-ops: 512 experts (served routing) and 16 experts (forced overlap) for IQ2_S, IQ3_XXS, IQ3_S, IQ4_XS
+gate/up (640x2560, broadcast b) and IQ4_NL down (2560x640), so every gather width meets shared experts.
+gather_setup: a leader that collects no column returns before compute. Only the PLANT test arm reaches it (its last
+token is outside nslots); real routing always collects >= 1, so the served path is unchanged.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+(cherry picked from commit c0eac973056dae96a68285f7e56ee1540b79aa3c)
+
+Origin: ArifiLabs (native) - fork-authored (lane-302); no upstream origin exists.
+Measured-effect: UNMEASURED on its own - supporting commit; see release ledger Table 1 W17, the number sits on that win's main commit
+---
+ .../ggml-vulkan/vulkan-shaders/mul_mat_vec_base.glsl   |  4 ++++
+ tests/test-backend-ops.cpp                             | 10 ++++++++++
+ 2 files changed, 14 insertions(+)
+
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_base.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_base.glsl
+index bbff7e70d7..a7faf1f3fc 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_base.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_base.glsl
+@@ -139,6 +139,10 @@ bool gather_setup() {
+             c++;
+         }
+     }
++    // only the PLANT test arm can collect nothing (its last token is outside nslots): no B offsets, no work
++    if (c == 0) {
++        return false;
++    }
+     [[unroll]] for (uint j = 1; j < NUM_COLS; ++j) {
+         if (j >= c) {
+             gcol_b[j] = gcol_b[0];
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index 3d1998843a..40a9cdc561 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -11745,6 +11745,16 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+         test_cases.emplace_back(new test_mul_mat_id(GGML_TYPE_IQ3_S,  GGML_TYPE_F32, 1024, 10, false, 128, n, 512));
+         test_cases.emplace_back(new test_mul_mat_id(GGML_TYPE_Q4_0,   GGML_TYPE_F32, 1024, 10, false, 256, n, 128));
+     }
++    // arifi lane-302: SERVED qwen4exp MoE shapes at the verify widths (gather path, GGML_ARIFI_MOE_GATHER).
++    // 512 experts = served routing; 16 experts forces heavy overlap so every gather width shares experts.
++    for (int n = 1; n <= 8; ++n) {
++        for (int ne : {512, 16}) {
++            for (ggml_type t : {GGML_TYPE_IQ2_S, GGML_TYPE_IQ3_XXS, GGML_TYPE_IQ3_S, GGML_TYPE_IQ4_XS}) {
++                test_cases.emplace_back(new test_mul_mat_id(t, GGML_TYPE_F32, ne, 10, true, 640, n, 2560));
++            }
++            test_cases.emplace_back(new test_mul_mat_id(GGML_TYPE_IQ4_NL, GGML_TYPE_F32, ne, 10, false, 2560, n, 640));
++        }
++    }
+     test_cases.emplace_back(new test_mul_mat_id(GGML_TYPE_Q4_0, GGML_TYPE_F32, 32, 2, false, 2880, 32, 2880));
+ 
+     // multiple blocks per row: exercises the block-stride loop and the

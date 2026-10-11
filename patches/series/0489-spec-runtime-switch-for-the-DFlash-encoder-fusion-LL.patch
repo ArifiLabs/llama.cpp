@@ -1,0 +1,316 @@
+From 115f9e3f982e7cf56d8db7b2ab698af87236861b Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 8 Sep 2026 09:12:43 -0400
+Subject: [PATCH] spec: runtime switch for the DFlash encoder fusion
+ (LLAMA_DFLASH_FUSED_INJECT), both injection paths kept, default LEGACY on
+ this fork
+
+Upstream 662a0b012 fused the DFlash encoder (fc + rms norm) into the K/V injection decode: one llama_decode per chunk instead of llama_encode -> device-to-host readback -> llama_decode. It left no way to measure itself except a revert-only second binary, which confounds the delta with build drift and ships nothing. This commit adds the switch, and both paths stay: graph<true>, the fused embd branch and the legacy host path.
+
+- llama-cparams.h: dflash_fused_inject (C API default true, DELIBERATELY unchanged - see below)
+- llama-context.{h,cpp}: set_dflash_fused_inject; decode() selects the embd batch width (encoder input width when fused, draft width when not); C API llama_set_dflash_fused_inject in llama-ext.h
+- models/dflash.cpp graph<false> embd branch: input width and the in-graph fc + norm follow the flag; the K/V projection below is shared by both paths
+- common/speculative.cpp draft-dflash: reads the env once in the ctor, calls the setter, sizes batch_inject for the chosen width, logs one receipt line; process() gathers into features_buf and runs the encode step on the legacy path, straight into batch_inject on the fused one
+
+lane-225 R38 merge: the DEFAULT IS FLIPPED to the legacy path on this fork. The R18 kernel wave measured the fused path at -0.98% CI95 [-1.16%, -0.80%] on the seat DFlash2 decode cell, so the verdict is DOCUMENTED-TAKE and the fused path does not ship as the default here. LLAMA_DFLASH_FUSED_INJECT=1 restores upstream 662a0b012 behaviour on the same binary. The C API default in llama-cparams.h stays fused because the legacy shape is a CALLER contract (the caller must llama_encode the chunk first), so only common/speculative.cpp - which owns both halves - defaults it off. This divergence from the wave report section 5 text (which recorded the branch default, fused) is deliberate and is recorded in docs/OPTIONS-REGISTRY.md. Caveat that travels with it: -0.98% is under this box's own decode build floor (R18 report section 3, inert controls reach +3.71%), so this is a conservative default, not a measured win.
+
+Probe condition: none (host-side speculative path, backend-independent). Override: LLAMA_DFLASH_FUSED_INJECT=1. Generic path: legacy encode + decode.
+
+Origin: ArifiLabs lane-212 R18 kernel wave, candidate R15-C2 (Fable 5.1 MEDIUM, kernel-maker); upstream mechanism 662a0b012 (#27310)
+Measured-effect: DOCUMENTED-TAKE. Seat DFlash2 decode -0.98% CI95 [-1.16%, -0.80%] fused vs legacy; U-IQ4XS +0.05% [-0.56%, +0.67%]; U-Q3KXL -0.87% [-2.50%, +0.77%]. The wave's INERT control on the same pair moved +3.71% [+0.80%, +6.61%] on decode, so none of these clears the build floor.
+Cherry-picked-from: 8aa3ab0e999cdbd29b742e0d9510a52f62a600d9 (lane-212/r15c2-dflash-encoder-fusion-2026-09-06, b10819 base)
+Lane: lane-225
+Conflict-resolved: hand: R55 risk-5 - upstream fc343a84b (llama_batch_ext) removed decode's local n_embd selection; the fork switch is re-homed into llama_batch_ext_select_n_embd_inp (llama-batch.h/.cpp): DFlash takes n_embd_inp_enc only when cparams.dflash_fused_inject, else the draft width; default arg true keeps upstream test-batch-alloc semantics. Legacy batch_compat builds the ext batch per call, so the runtime flag set by speculative.cpp is read live
+---
+ common/speculative.cpp | 68 +++++++++++++++++++++++++++++++++++-------
+ src/llama-batch.cpp    |  6 ++--
+ src/llama-batch.h      |  4 ++-
+ src/llama-context.cpp  | 13 ++++++++
+ src/llama-context.h    |  1 +
+ src/llama-cparams.h    |  5 ++++
+ src/llama-ext.h        |  9 ++++++
+ src/models/dflash.cpp  | 25 +++++++++++-----
+ 8 files changed, 110 insertions(+), 21 deletions(-)
+
+diff --git a/common/speculative.cpp b/common/speculative.cpp
+index 530ae29959..ad7c606864 100644
+--- a/common/speculative.cpp
++++ b/common/speculative.cpp
+@@ -1010,6 +1010,17 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+     int32_t n_embd_enc = 0;  // target_layer_ids_n * target_hidden_size
+     int32_t n_embd_tgt = 0;  // target model hidden size
+ 
++    // LLAMA_DFLASH_FUSED_INJECT (default 0 on this fork, lane-225): 1 = the injection decode encodes
++    // the raw target features in-graph (upstream 662a0b012, one llama_decode per chunk). 0 = the
++    // pre-fusion shape: llama_encode the chunk, read the encoded rows back, feed them to llama_decode
++    // at the draft width. Both paths kept so the fusion can be A/B'd on one binary.
++    // The default is the LEGACY path here because the fused path measured -0.98% CI95 [-1.16%, -0.80%]
++    // on the seat DFlash2 decode cell (R18 kernel wave, DOCUMENTED-TAKE). The C API default in
++    // llama-cparams.h stays upstream-fused: the legacy shape is a CALLER contract (the caller must
++    // llama_encode first), so only this driver, which owns both halves, defaults it off.
++    bool fused_inject = false;
++    std::vector<float> features_buf; // legacy path: concatenated target features for llama_encode
++
+     int32_t     block_size    = 0;
+     llama_token mask_token_id = 0;
+ 
+@@ -1180,8 +1191,13 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+                     dflash2_preventive ? "preventive low-start" : "reactive timed");
+         }
+ 
++        fused_inject = common_speculative_env_enabled("LLAMA_DFLASH_FUSED_INJECT", false);
++        llama_set_dflash_fused_inject(ctx_dft, fused_inject);
++        LOG_INF("%s: DFlash KV injection: %s\n", __func__,
++                fused_inject ? "fused (one decode, encoder in-graph, LLAMA_DFLASH_FUSED_INJECT=1)" : "legacy (encode + decode, default)");
++
+         batch        = llama_batch_init(llama_n_batch(ctx_dft), 0,          n_seq);
+-        batch_inject = llama_batch_init(llama_n_ubatch(ctx_dft), n_embd_enc, n_seq);
++        batch_inject = llama_batch_init(llama_n_ubatch(ctx_dft), fused_inject ? n_embd_enc : n_embd_dec, n_seq);
+ 
+         // embd batches on an M-RoPE draft need 4 position rows per token
+         is_mrope = llama_model_rope_type(model_dft) == LLAMA_ROPE_TYPE_MROPE;
+@@ -1488,9 +1504,15 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+             for (int32_t offset = 0; offset < n_rows; offset += n_ubatch) {
+                 const int32_t n_chunk = std::min(n_ubatch, n_rows - offset);
+ 
+-                // gather target features per extract layer; the fused decode encodes and
+-                // injects them into the K/V cache at the target positions
++                // gather target features per extract layer. fused: straight into batch_inject, the
++                // decode encodes and injects them into the K/V cache at the target positions.
++                // legacy: into features_buf, encoded first by llama_encode below.
+                 batch_inject.n_tokens = n_chunk;
++                float * feats = batch_inject.embd;
++                if (!fused_inject) {
++                    features_buf.resize((size_t) n_chunk * n_embd_enc);
++                    feats = features_buf.data();
++                }
+                 for (uint32_t k = 0; k < target_layer_ids_n; ++k) {
+                     const float * layer = target_layer_ids[k] == n_layer_tgt
+                         ? llama_get_embeddings_nextn(ctx_tgt)
+@@ -1499,21 +1521,20 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+                         GGML_ABORT("DFlash: target layer %d input not extracted.", target_layer_ids[k]);
+                     }
+                     for (int32_t i = 0; i < n_chunk; ++i) {
+-                        float       * dst = batch_inject.embd + (size_t) i * n_embd_enc + k * (size_t) n_embd_tgt;
++                        float       * dst = feats + (size_t) i * n_embd_enc + k * (size_t) n_embd_tgt;
+                         const float * src = layer + (size_t) (i_batch_beg[seq_id] + offset + i) * n_embd_tgt;
+                         std::memcpy(dst, src, (size_t) n_embd_tgt * sizeof(float));
+                     }
+                 }
+ 
+-                // sanitize non-finite feature values before the fused decode. on Metal, the
+-                // mat-mat kernels stage f32 activations as f16 for the simdgroup multiply;
+-                // Laguna's massive-activation rows (attention-sink tokens, |x| ~ 1e6 in the
+-                // pre-final-norm residual) overflow f16 -> inf/nan. one poisoned row would
+-                // otherwise NaN the whole drafter KV cache. Re-grafted onto b10819's chunked
++                // sanitize non-finite feature values before the encoder runs (fused decode or
++                // legacy encode). on Metal, the mat-mat kernels stage f32 activations as f16 for the
++                // simdgroup multiply; Laguna's massive-activation rows (attention-sink tokens,
++                // |x| ~ 1e6 in the pre-final-norm residual) overflow f16 -> inf/nan. one poisoned row
++                // would otherwise NaN the whole drafter KV cache. Re-grafted onto b10819's chunked
+                 // encoder buffer; it used to run over the fork's own features_buf.
+                 {
+                     size_t n_bad = 0;
+-                    float * feats = batch_inject.embd;
+                     for (size_t v = 0; v < (size_t) n_chunk * n_embd_enc; ++v) {
+                         float & x = feats[v];
+                         if (!std::isfinite(x)) {
+@@ -1531,6 +1552,33 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+                     }
+                 }
+ 
++                if (!fused_inject) {
++                    // legacy (pre-662a0b012) shape: run the encoder graph on its own, read the
++                    // encoded rows back to the host, and hand them to the injection decode at the
++                    // draft hidden width. One extra graph build + one device->host round trip per
++                    // chunk - that cost is exactly what the fused default removes.
++                    llama_batch enc_batch = {
++                        /*.n_tokens =*/ n_chunk,
++                        /*.token    =*/ nullptr,
++                        /*.embd     =*/ features_buf.data(),
++                        /*.pos      =*/ nullptr,
++                        /*.n_seq_id =*/ nullptr,
++                        /*.seq_id   =*/ nullptr,
++                        /*.logits   =*/ nullptr,
++                    };
++
++                    const int32_t rc_enc = llama_encode(ctx_dft, enc_batch);
++                    if (rc_enc != 0) {
++                        LOG_ERR("%s: llama_encode(ctx_dft) failed rc=%d (n_tokens=%d, offset=%d)\n",
++                                __func__, rc_enc, (int) n_chunk, (int) offset);
++                        return false;
++                    }
++
++                    const float * inp_g = llama_get_embeddings_nextn(ctx_dft);
++                    GGML_ASSERT(inp_g && "DFlash encoder produced no output.");
++                    std::memcpy(batch_inject.embd, inp_g, (size_t) n_chunk * n_embd_dec * sizeof(float));
++                }
++
+                 for (int32_t i = 0; i < n_chunk; ++i) {
+                     const llama_pos p = batch_in.pos[i_batch_beg[seq_id] + offset + i];
+                     batch_inject.pos[i] = p;
+diff --git a/src/llama-batch.cpp b/src/llama-batch.cpp
+index c10ac5cec4..59da8bdc4c 100644
+--- a/src/llama-batch.cpp
++++ b/src/llama-batch.cpp
+@@ -1024,11 +1024,11 @@ void llama_batch_free(struct llama_batch batch) {
+ 
+ // llama_batch_ext
+ 
+-size_t llama_batch_ext_select_n_embd_inp(llama_context_type ctx_type, llm_arch arch, const llama_hparams & hparams) {
++size_t llama_batch_ext_select_n_embd_inp(llama_context_type ctx_type, llm_arch arch, const llama_hparams & hparams, bool dflash_fused_inject) {
+     if (ctx_type == LLAMA_CONTEXT_TYPE_MTP) {
+         return hparams.n_embd_out();
+     }
+-    if (arch == LLM_ARCH_DFLASH) {
++    if (arch == LLM_ARCH_DFLASH && dflash_fused_inject) {
+         return hparams.n_embd_inp_enc();
+     }
+     return hparams.n_embd_inp();
+@@ -1036,7 +1036,7 @@ size_t llama_batch_ext_select_n_embd_inp(llama_context_type ctx_type, llm_arch a
+ 
+ llama_batch_ext::llama_batch_ext(llama_context * ctx) :
+         n_tokens_max(llama_n_batch(ctx)),
+-        n_embd_inp(llama_batch_ext_select_n_embd_inp(ctx->get_cparams().ctx_type, llama_get_model(ctx)->arch, llama_get_model(ctx)->hparams)),
++        n_embd_inp(llama_batch_ext_select_n_embd_inp(ctx->get_cparams().ctx_type, llama_get_model(ctx)->arch, llama_get_model(ctx)->hparams, ctx->get_cparams().dflash_fused_inject)),
+         n_embd_inp_enc(llama_get_model(ctx)->hparams.n_embd_inp_enc()),
+         n_seq_max(llama_n_seq_max(ctx)),
+         mem(llama_get_memory(ctx)),
+diff --git a/src/llama-batch.h b/src/llama-batch.h
+index 8037ce64ea..8529cb3bbc 100644
+--- a/src/llama-batch.h
++++ b/src/llama-batch.h
+@@ -75,7 +75,9 @@ struct llama_hparams;
+ // MTP hook batches carry the target model's hidden state (n_embd_out size).
+ // DFlash batches carry the fused target features at the encoder input width (n_embd_inp_enc size).
+ // Normal batches carry token embeddings (n_embd_inp size).
+-size_t llama_batch_ext_select_n_embd_inp(llama_context_type ctx_type, llm_arch arch, const llama_hparams & hparams);
++// arifi: with the DFlash fused injection off (LLAMA_DFLASH_FUSED_INJECT=0, the fork default) DFlash embd
++// batches carry pre-encoded rows at the draft width, so the encoder width applies only when fused.
++size_t llama_batch_ext_select_n_embd_inp(llama_context_type ctx_type, llm_arch arch, const llama_hparams & hparams, bool dflash_fused_inject = true);
+ 
+ struct llama_batch_ext {
+     const size_t n_tokens_max;     // max number of tokens that can be stored in the batch
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index 4351805162..5d1a19e54e 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -1572,6 +1572,15 @@ void llama_context::set_embeddings_nextn(bool value, bool masked) {
+     cparams.embeddings_nextn_masked = masked;
+ }
+ 
++void llama_context::set_dflash_fused_inject(bool value) {
++    LLAMA_LOG_DEBUG("%s: value = %d\n", __func__, value);
++
++    cparams.dflash_fused_inject = value;
++
++    // the embd-branch graph shape (input width, fc + norm present or not) follows this flag
++    sched_need_reserve = true;
++}
++
+ void llama_context::set_embeddings_layer_inp(uint32_t lid, bool enable) {
+     LLAMA_LOG_DEBUG("%s: lid = %d, enable = %d\n", __func__, lid, enable);
+ 
+@@ -4487,6 +4496,10 @@ void llama_set_embeddings_nextn(llama_context * ctx, bool value, bool masked) {
+     ctx->set_embeddings_nextn(value, masked);
+ }
+ 
++void llama_set_dflash_fused_inject(llama_context * ctx, bool value) {
++    ctx->set_dflash_fused_inject(value);
++}
++
+ void llama_set_embeddings_layer_inp(llama_context * ctx, uint32_t lid, bool value) {
+     ctx->set_embeddings_layer_inp(lid, value);
+ }
+diff --git a/src/llama-context.h b/src/llama-context.h
+index aa0cf04f22..1485cd4ef8 100644
+--- a/src/llama-context.h
++++ b/src/llama-context.h
+@@ -127,6 +127,7 @@ struct llama_context {
+ 
+     void set_embeddings (bool value);
+     void set_embeddings_nextn(bool value, bool masked);
++    void set_dflash_fused_inject(bool value);
+     void set_embeddings_layer_inp(uint32_t lid, bool enable);
+     void set_nextn_layer_offset(int32_t offset);
+     void set_mtp_chain(bool value);
+diff --git a/src/llama-cparams.h b/src/llama-cparams.h
+index c84d3ae3ff..65244058d0 100644
+--- a/src/llama-cparams.h
++++ b/src/llama-cparams.h
+@@ -39,6 +39,11 @@ struct llama_cparams {
+     bool embeddings_nextn;        // also extract the hidden state before the final output norm
+     bool embeddings_nextn_masked; // extract for only rows where batch.logits != 0
+     bool mtp_chain;               // DECODER_MTP: chain rows in-graph from the first row's inputs
++    // DFlash draft contexts: true (default, upstream 662a0b012) = embd batches carry raw target features
++    // at the encoder input width and the decoder graph applies fc + norm itself (one decode per
++    // injection); false = the pre-fusion shape, the caller runs llama_encode first and the embd batch
++    // carries already-encoded rows at the draft hidden width. Runtime switch, both paths kept (lane-212).
++    bool dflash_fused_inject = true;
+     bool causal_attn;
+     bool offload_kqv;
+     bool flash_attn;
+diff --git a/src/llama-ext.h b/src/llama-ext.h
+index 70c1531078..c68d0f33dd 100644
+--- a/src/llama-ext.h
++++ b/src/llama-ext.h
+@@ -111,6 +111,15 @@ LLAMA_API llama_memory_breakdown llama_get_memory_breakdown(const struct llama_c
+ // If masked == false, output the embeddings for all tokens in the batch regardless of batch.logits
+ LLAMA_API void llama_set_embeddings_nextn(struct llama_context * ctx, bool value, bool masked);
+ 
++// DFlash draft context: select how target features reach the draft K/V cache.
++// true  (default) = fused (upstream 662a0b012): the embd batch carries raw target features at the
++//                   encoder input width and the decoder applies fc + norm in-graph - one llama_decode.
++// false           = legacy: the caller runs llama_encode, reads the encoded rows back through
++//                   llama_get_embeddings_nextn and feeds them to llama_decode at the draft width.
++// Both paths are kept; the switch exists so the fusion can be measured on one binary and so the
++// pre-fusion path stays available as a fallback. Call before the first decode on the context.
++LLAMA_API void llama_set_dflash_fused_inject(struct llama_context * ctx, bool value);
++
+ // Select which appended NextN block the DECODER_MTP graph runs (offset past
+ // the trunk: il = n_layer() + offset). Used by the speculative NextN driver to
+ // chain multiple trained NextN heads. Default 0 (first head).
+diff --git a/src/models/dflash.cpp b/src/models/dflash.cpp
+index dec25bc742..3759086655 100644
+--- a/src/models/dflash.cpp
++++ b/src/models/dflash.cpp
+@@ -655,21 +655,32 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
+ 
+     // KV cache injection
+     if (ubatch.embd) {
+-        auto inp = std::make_unique<llm_graph_input_embd>(n_embd_inp);
++        // fused (default): the batch carries raw target features at the encoder input width and the
++        // encoder (fc + norm) runs here, in the same graph as the K/V projection - upstream 662a0b012.
++        // legacy (cparams.dflash_fused_inject == false): the caller already ran the encoder graph
++        // (graph<true>) and the batch carries encoded rows at the draft hidden width - the pre-fusion
++        // shape. Both kept; selected at runtime by llama_set_dflash_fused_inject (lane-212).
++        const bool    fused     = cparams.dflash_fused_inject;
++        const int64_t n_embd_in = fused ? n_embd_inp : n_embd;
+ 
+-        inp->embd = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_embd_inp, n_tokens);
++        auto inp = std::make_unique<llm_graph_input_embd>(n_embd_in);
++
++        inp->embd = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_embd_in, n_tokens);
+         ggml_set_input(inp->embd);
+ 
+         ggml_tensor * inp_target = inp->embd;
+-        cb(inp_target, "inp_target_features", -1);
++        cb(inp_target, fused ? "inp_target_features" : "inp_g_embeddings", -1);
+ 
+         res->add_input(std::move(inp));
+ 
+         const auto & model_df = static_cast<const llama_model_dflash &>(model);
+-        // fuse the target features through the encoder
+-        ggml_tensor * inp_g = build_lora_mm(model.fc, inp_target, model.fc_s);
+-        inp_g = build_norm(inp_g, model.output_norm_enc, NULL, LLM_NORM_RMS, -1);
+-        cb(inp_g, "inp_g_embeddings", -1);
++        ggml_tensor * inp_g = inp_target;
++        if (fused) {
++            // fuse the target features through the encoder
++            inp_g = build_lora_mm(model.fc, inp_target, model.fc_s);
++            inp_g = build_norm(inp_g, model.output_norm_enc, NULL, LLM_NORM_RMS, -1);
++            cb(inp_g, "inp_g_embeddings", -1);
++        }
+ 
+         for (int il = 0; il < n_layer; ++il) {
+             const auto & layer = model.layers[il];

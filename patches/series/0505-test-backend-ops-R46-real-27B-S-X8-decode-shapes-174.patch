@@ -1,0 +1,44 @@
+From 47fea0cd56216e13ef18403707298542f413b939 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 10 Sep 2026 10:46:33 -0400
+Subject: [PATCH] test-backend-ops: R46 real 27B S-X8 decode shapes
+ (17408x5120, 5120x17408, 248320x5120) for sx8/q8_0/q4_K at n=1..8
+
+The lane-224 receipts measured S-X8 only at 4096x14336, which is not a shape the 27B file carries. The 27B .sx8v43 holds 128 gate/up matrices at 17408x5120 and 64 down matrices at 5120x17408 in S-X8, plus the 248320x5120 embedding/output pair; every other projection is Q8_0. Q8_0 and Q4_K ride along as the two controls the R46 analysis pairs S-X8 against, and n=6/7 fill the two widths the old receipts left empty.
+
+No kernel change in this commit: this binary is the BASELINE yardstick every later paired number is measured against. An empty baseline filter must never be mistaken for a pass.
+
+Origin: ArifiLabs (native)
+Lane: lane-230
+---
+ tests/test-backend-ops.cpp | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index c3e6dc126e..2be25ba44d 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -12327,6 +12327,23 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
+         }
+     }
+ 
++    // ArifiLabs lane-230 / R46: the REAL 27B S-X8 decode shapes. The 27B .sx8v43 file carries 128
++    // gate/up matrices at 17408x5120 and 64 down matrices at 5120x17408 in S-X8, plus the
++    // 248320x5120 embedding/output pair; every other projection is Q8_0. Q8_0 and Q4_K ride along
++    // as the two controls the R46 analysis pairs S-X8 against. n=6 and n=7 fill the two widths the
++    // lane-224 receipts left empty, so the mat-vec width sweep has no hole.
++    for (int bs : {1, 2, 3, 4, 5, 6, 7, 8}) {
++        for (ggml_type type_a : {GGML_TYPE_SX8, GGML_TYPE_Q8_0, GGML_TYPE_Q4_K}) {
++            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32,  17408, bs,  5120, {1, 1}, {1, 1}));
++            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32,   5120, bs, 17408, {1, 1}, {1, 1}));
++            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 248320, bs,  5120, {1, 1}, {1, 1}));
++            // 4096x14336 already exists for all_types at bs 1..5 and 8; add only the two holes.
++            if (bs == 6 || bs == 7) {
++                test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 4096, bs, 14336, {1, 1}, {1, 1}));
++            }
++        }
++    }
++
+     // qwen3-30b-a3b
+     for (int bs : {1, 4, 8, 32, 64, 128, 256, 512}) {
+         for (ggml_type type_a : {GGML_TYPE_F32, GGML_TYPE_F16, GGML_TYPE_Q4_0, GGML_TYPE_Q8_0, GGML_TYPE_Q4_K, GGML_TYPE_Q6_K, GGML_TYPE_IQ2_XS, GGML_TYPE_IQ4_XS}) {

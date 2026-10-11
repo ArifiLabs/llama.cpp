@@ -1,0 +1,31 @@
+From c586631e18e4196af8cfd65fa88a09f0fdbfc715 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 20 Aug 2026 07:23:36 -0400
+Subject: [PATCH] metal: declare the tq3_rht pipeline getter in
+ ggml-metal-device.h
+
+Follow-up to 827f683e4: the getter definition and its ops.cpp caller
+landed but the header declaration did not - a Metal build would fail
+at ggml-metal-ops.cpp with an undeclared identifier. The census 5-file
+Metal list missed device.h the same way it missed ggml-metal.cpp.
+
+Taken-from: turbo-tan/llama.cpp-tq3@854516439
+Origin: lane-160 completeness fix caught by self-review before any checker
+Measured-effect: UNMEASURED ON THIS RIG (no Metal toolchain)
+Lane: lane-160
+---
+ ggml/src/ggml-metal/ggml-metal-device.h | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.h b/ggml/src/ggml-metal/ggml-metal-device.h
+index 2961ec5f97..f12403daa9 100644
+--- a/ggml/src/ggml-metal/ggml-metal-device.h
++++ b/ggml/src/ggml-metal/ggml-metal-device.h
+@@ -112,6 +112,7 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_cpy
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_pool_1d           (ggml_metal_library_t lib, const struct ggml_tensor * op, enum ggml_op_pool op_pool);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_pool_2d           (ggml_metal_library_t lib, const struct ggml_tensor * op, enum ggml_op_pool op_pool);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_get_rows          (ggml_metal_library_t lib, enum ggml_type tsrc);
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq3_rht           (ggml_metal_library_t lib);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_set_rows          (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_diag              (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_repeat            (ggml_metal_library_t lib, enum ggml_type tsrc);

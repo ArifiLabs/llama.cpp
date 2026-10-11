@@ -1,0 +1,30 @@
+From e64fb72ee32512c22c83c21c891a461d23de05cb Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 1 Sep 2026 12:26:24 -0400
+Subject: [PATCH] lane-196: promote the tail-ON banner to WARN - llama-server
+ drops INFO at default verbosity
+
+The lane-194 WARN->INFO regression SPINE banked against kv-cache:537, fixed at source: the A/B
+harnesses have read tail_banner: null on demonstrably live launches since lane-191 (lane-196's own
+receipt gate hit it again on all six launches). Loud when present, per the receipts law; the
+refusals were already WARN.
+---
+ src/llama-kv-cache.cpp | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
+index 2c6291c2b8..762fca0ef8 100644
+--- a/src/llama-kv-cache.cpp
++++ b/src/llama-kv-cache.cpp
+@@ -556,7 +556,10 @@ llama_kv_cache::llama_kv_cache(
+                 // its log was measuring the compose, not the per-query path (same vacuous-green
+                 // law as the compose type line below).
+                 const bool perq = llama_kv_tail_perq() && !llama_kv_tail_noring();
+-                LLAMA_LOG_INFO("%s: KV precision tail ON - %u exact F16 cells per layer beside a %s/%s body; "
++                // lane-196: WARN, not INFO - llama-server drops INFO at default verbosity, which
++                // made lane-192/194's harnesses read tail_banner: null on live launches (the
++                // WARN->INFO regression SPINE banked against kv-cache:537; this is that fix).
++                LLAMA_LOG_WARN("%s: KV precision tail ON - %u exact F16 cells per layer beside a %s/%s body; "
+                         "mode=%s; compose=%s%s\n",
+                         __func__, tail_n, ggml_type_name(layer_type_k), ggml_type_name(layer_type_v),
+                         perq ? "per-query" : "compose",
