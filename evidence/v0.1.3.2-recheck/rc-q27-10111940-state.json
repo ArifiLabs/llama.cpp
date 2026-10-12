@@ -1,0 +1,5291 @@
+{
+  "run_id": "rc-q27-10111940",
+  "state": "pointgate-gpu-complete",
+  "pid": 13604,
+  "started_utc": "2026-10-11T23:40:45.0702423Z",
+  "head": "cd2e2a6bd5d4afd4efb8e4b7697dff509129a730",
+  "arms": [
+    {
+      "arm": "P-a1-g",
+      "args": [
+        "-m",
+        "C:\\ArifiLabs\\models\\hf\\huihui-ai\\Huihui-Qwen3.8-27B-abliterated-UD-GGUF\\Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf",
+        "-dev",
+        "Vulkan0",
+        "-ngl",
+        "999",
+        "-fa",
+        "on",
+        "-c",
+        "8192",
+        "-b",
+        "1024",
+        "-ub",
+        "512",
+        "-t",
+        "16",
+        "-tb",
+        "32",
+        "-ctk",
+        "q8_0",
+        "-ctv",
+        "q8_0",
+        "--parallel",
+        "1",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "--ctx-checkpoints",
+        "32",
+        "--ctx-checkpoints-device",
+        "off",
+        "--ctx-checkpoints-toolcall",
+        "on"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 1254158336.0,
+      "started_utc": "2026-10-11T23:42:21.8412151Z",
+      "healthy": true,
+      "peak_ws_bytes": 1602379776,
+      "peak_private_bytes": 20326801408,
+      "min_avail_bytes": 17753096192,
+      "avail_before_bytes": 19882115072,
+      "requests": [
+        {
+          "tag": "rc-q27-10111940-P-a1-g-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=15.91 ttft_ms=798.9 gen_n=8 decode_tps=4.3 draft=None/None"
+        },
+        {
+          "tag": "rc-q27-10111940-P-a1-g-r1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=18.94 ttft_ms=671.5 gen_n=128 decode_tps=4.58 draft=None/None"
+        },
+        {
+          "tag": "rc-q27-10111940-P-a1-g-r1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=104.01 ttft_ms=5851.2 gen_n=128 decode_tps=4.54 draft=None/None"
+        },
+        {
+          "tag": "rc-q27-10111940-P-a1-g-r2-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=18.41 ttft_ms=805.0 gen_n=128 decode_tps=4.58 draft=None/None"
+        },
+        {
+          "tag": "rc-q27-10111940-P-a1-g-r2-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=105.63 ttft_ms=5762.4 gen_n=128 decode_tps=4.57 draft=None/None"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 16456,
+      "load_s": 10.3,
+      "box": {
+        "rounds": [
+          {
+            "name": "rc-q27-10111940-P-a1-g-r1-short",
+            "start": "2026-10-11T23:42:37.5317845Z",
+            "end": "2026-10-11T23:43:07.7175095Z",
+            "n_samples": 30,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 3294.1,
+                "median": 4921.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.0,
+                "median": 1.37,
+                "max": 2.02
+              },
+              "fclk_mhz": {
+                "min": 1467.0,
+                "median": 1497.3,
+                "max": 1539.9
+              },
+              "free_ram_gb": {
+                "min": 18.23,
+                "median": 18.24,
+                "max": 18.26
+              },
+              "gpu_clk_mhz": {
+                "min": 1347.0,
+                "median": 3100.0,
+                "max": 3100.0
+              },
+              "gpu_temp_c": {
+                "min": 42.8,
+                "median": 53.1,
+                "max": 55.8
+              },
+              "host_cpu_pct": {
+                "min": 4.82,
+                "median": 6.35,
+                "max": 7.88
+              },
+              "mclk_mhz": {
+                "min": 2795.0,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 22.7,
+                "median": 47.2,
+                "max": 49.7
+              },
+              "tctl_c": {
+                "min": 50.9,
+                "median": 56.6,
+                "max": 58.6
+              },
+              "uclk_mhz": {
+                "min": 1284.3,
+                "median": 1397.5,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [
+              "monotificationux.exe",
+              "mousocoreworker.exe"
+            ],
+            "births_recorded": [
+              "monotificationux.exe",
+              "mousocoreworker.exe"
+            ],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": false,
+            "taint": []
+          },
+          {
+            "name": "rc-q27-10111940-P-a1-g-r1-long",
+            "start": "2026-10-11T23:43:07.7318101Z",
+            "end": "2026-10-11T23:43:41.9183856Z",
+            "n_samples": 34,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 3294.1,
+                "median": 4921.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.07,
+                "median": 1.46,
+                "max": 3.84
+              },
+              "fclk_mhz": {
+                "min": 1452.7,
+                "median": 1497.3,
+                "max": 1533.0
+              },
+              "free_ram_gb": {
+                "min": 17.81,
+                "median": 17.87,
+                "max": 18.2
+              },
+              "gpu_clk_mhz": {
+                "min": 1373.0,
+                "median": 3100.0,
+                "max": 3100.0
+              },
+              "gpu_temp_c": {
+                "min": 47.5,
+                "median": 57.1,
+                "max": 66.5
+              },
+              "host_cpu_pct": {
+                "min": 5.08,
+                "median": 6.77,
+                "max": 10.35
+              },
+              "mclk_mhz": {
+                "min": 2395.7,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 22.2,
+                "median": 48.1,
+                "max": 67.1
+              },
+              "tctl_c": {
+                "min": 57.9,
+                "median": 61.5,
+                "max": 65.5
+              },
+              "uclk_mhz": {
+                "min": 1272.8,
+                "median": 1397.5,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [
+              "compattelrunner.exe",
+              "sppsvc.exe",
+              "svchost.exe",
+              "uieorchestrator.exe",
+              "uieorchestratorstub.exe"
+            ],
+            "births_recorded": [
+              "compattelrunner.exe",
+              "sppsvc.exe",
+              "svchost.exe",
+              "uieorchestrator.exe",
+              "uieorchestratorstub.exe"
+            ],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": true,
+            "taint": [
+              "host_cpu_max 10.3% > 10%"
+            ]
+          },
+          {
+            "name": "rc-q27-10111940-P-a1-g-r2-short",
+            "start": "2026-10-11T23:43:41.9354853Z",
+            "end": "2026-10-11T23:44:12.1367993Z",
+            "n_samples": 30,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 3294.1,
+                "median": 4921.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.65,
+                "median": 1.3,
+                "max": 2.28
+              },
+              "fclk_mhz": {
+                "min": 1497.3,
+                "median": 1497.3,
+                "max": 1552.8
+              },
+              "free_ram_gb": {
+                "min": 17.75,
+                "median": 17.78,
+                "max": 17.8
+              },
+              "gpu_clk_mhz": {
+                "min": 2717.0,
+                "median": 3100.0,
+                "max": 3100.0
+              },
+              "gpu_temp_c": {
+                "min": 56.9,
+                "median": 58.8,
+                "max": 59.2
+              },
+              "host_cpu_pct": {
+                "min": 4.56,
+                "median": 5.83,
+                "max": 9.11
+              },
+              "mclk_mhz": {
+                "min": 2795.0,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 43.2,
+                "median": 46.9,
+                "max": 48.4
+              },
+              "tctl_c": {
+                "min": 61.9,
+                "median": 64.0,
+                "max": 65.8
+              },
+              "uclk_mhz": {
+                "min": 1370.3,
+                "median": 1397.5,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [],
+            "births_recorded": [],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": false,
+            "taint": []
+          },
+          {
+            "name": "rc-q27-10111940-P-a1-g-r2-long",
+            "start": "2026-10-11T23:44:12.1490264Z",
+            "end": "2026-10-11T23:44:46.346171Z",
+            "n_samples": 34,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 3164.3,
+                "median": 3294.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.07,
+                "median": 1.37,
+                "max": 2.6
+              },
+              "fclk_mhz": {
+                "min": 1413.0,
+                "median": 1497.3,
+                "max": 1507.8
+              },
+              "free_ram_gb": {
+                "min": 17.76,
+                "median": 17.94,
+                "max": 18.07
+              },
+              "gpu_clk_mhz": {
+                "min": 1690.0,
+                "median": 3100.0,
+                "max": 3100.0
+              },
+              "gpu_temp_c": {
+                "min": 53.8,
+                "median": 60.5,
+                "max": 69.4
+              },
+              "host_cpu_pct": {
+                "min": 4.88,
+                "median": 6.15,
+                "max": 7.23
+              },
+              "mclk_mhz": {
+                "min": 2395.7,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 30.2,
+                "median": 48.7,
+                "max": 66.5
+              },
+              "tctl_c": {
+                "min": 61.5,
+                "median": 64.5,
+                "max": 69.1
+              },
+              "uclk_mhz": {
+                "min": 1311.9,
+                "median": 1397.5,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [],
+            "births_recorded": [],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": false,
+            "taint": []
+          }
+        ],
+        "clean_rounds": 3,
+        "cpu_bar_pct": 10.0,
+        "ignored_procs": []
+      },
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.12.718.989 I slot print_timing: id  0 | task 0 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 1623949 us/7, process 0 us, save 0 us, restore 0 us\r",
+        "0.42.744.971 I slot print_timing: id  0 | task 10 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 27675732 us/127, process 0 us, save 0 us, restore 0 us\r",
+        "1.18.355.407 I slot print_timing: id  0 | task 140 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 27899385 us/127, process 0 us, save 0 us, restore 0 us\r",
+        "1.47.267.935 I slot print_timing: id  0 | task 271 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 27650433 us/127, process 0 us, save 0 us, restore 0 us\r",
+        "2.22.504.577 I slot print_timing: id  0 | task 401 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 27714119 us/127, process 0 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-11T23:44:49.8267482Z"
+    },
+    {
+      "arm": "P-b1-p",
+      "args": [
+        "-m",
+        "C:\\ArifiLabs\\models\\hf\\huihui-ai\\Huihui-Qwen3.8-27B-abliterated-UD-GGUF\\Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf",
+        "-dev",
+        "Vulkan0",
+        "-ngl",
+        "999",
+        "-fa",
+        "on",
+        "-c",
+        "8192",
+        "-b",
+        "1024",
+        "-ub",
+        "512",
+        "-t",
+        "16",
+        "-tb",
+        "32",
+        "-ctk",
+        "q8_0",
+        "-ctv",
+        "q8_0",
+        "--parallel",
+        "1",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "--ctx-checkpoints",
+        "32",
+        "--ctx-checkpoints-device",
+        "off",
+        "--ctx-checkpoints-toolcall",
+        "on"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 1247997952.0,
+      "started_utc": "2026-10-11T23:45:22.2992535Z",
+      "healthy": true,
+      "peak_ws_bytes": 1603735552,
+      "peak_private_bytes": 20315820032,
+      "min_avail_bytes": 17524477952,
+      "avail_before_bytes": 19475619840,
+      "requests": [
+        {
+          "tag": "rc-q27-10111940-P-b1-p-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=15.09 ttft_ms=825.8 gen_n=8 decode_tps=4.28 draft=None/None"
+        },
+        {
+          "tag": "rc-q27-10111940-P-b1-p-r1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=18.83 ttft_ms=660.5 gen_n=128 decode_tps=4.59 draft=None/None"
+        },
+        {
+          "tag": "rc-q27-10111940-P-b1-p-r1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=102.74 ttft_ms=5926.0 gen_n=128 decode_tps=4.52 draft=None/None"
+        },
+        {
+          "tag": "rc-q27-10111940-P-b1-p-r2-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=18.42 ttft_ms=828.4 gen_n=128 decode_tps=4.57 draft=None/None"
+        },
+        {
+          "tag": "rc-q27-10111940-P-b1-p-r2-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=107.68 ttft_ms=5650.2 gen_n=128 decode_tps=4.5 draft=None/None"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 10120,
+      "load_s": 6.6,
+      "box": {
+        "rounds": [
+          {
+            "name": "rc-q27-10111940-P-b1-p-r1-short",
+            "start": "2026-10-11T23:45:34.2009738Z",
+            "end": "2026-10-11T23:46:04.377095Z",
+            "n_samples": 30,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 3294.1,
+                "median": 3294.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.13,
+                "median": 1.37,
+                "max": 1.83
+              },
+              "fclk_mhz": {
+                "min": 1480.5,
+                "median": 1497.3,
+                "max": 1506.1
+              },
+              "free_ram_gb": {
+                "min": 18.2,
+                "median": 18.21,
+                "max": 18.23
+              },
+              "gpu_clk_mhz": {
+                "min": 1536.0,
+                "median": 3100.0,
+                "max": 3100.0
+              },
+              "gpu_temp_c": {
+                "min": 48.2,
+                "median": 56.0,
+                "max": 58.0
+              },
+              "host_cpu_pct": {
+                "min": 4.82,
+                "median": 5.9,
+                "max": 8.26
+              },
+              "mclk_mhz": {
+                "min": 2395.7,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 28.6,
+                "median": 47.6,
+                "max": 48.5
+              },
+              "tctl_c": {
+                "min": 55.0,
+                "median": 59.0,
+                "max": 61.8
+              },
+              "uclk_mhz": {
+                "min": 1309.4,
+                "median": 1397.5,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [],
+            "births_recorded": [],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": false,
+            "taint": []
+          },
+          {
+            "name": "rc-q27-10111940-P-b1-p-r1-long",
+            "start": "2026-10-11T23:46:04.391694Z",
+            "end": "2026-10-11T23:46:40.6109679Z",
+            "n_samples": 36,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 3269.1,
+                "median": 3294.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.0,
+                "median": 1.43,
+                "max": 4.3
+              },
+              "fclk_mhz": {
+                "min": 1462.3,
+                "median": 1497.3,
+                "max": 1564.7
+              },
+              "free_ram_gb": {
+                "min": 17.8,
+                "median": 17.83,
+                "max": 18.21
+              },
+              "gpu_clk_mhz": {
+                "min": 1483.0,
+                "median": 3100.0,
+                "max": 3100.0
+              },
+              "gpu_temp_c": {
+                "min": 51.2,
+                "median": 59.05,
+                "max": 69.2
+              },
+              "host_cpu_pct": {
+                "min": 4.73,
+                "median": 7.72,
+                "max": 12.73
+              },
+              "mclk_mhz": {
+                "min": 2395.7,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 25.8,
+                "median": 46.45,
+                "max": 66.8
+              },
+              "tctl_c": {
+                "min": 59.2,
+                "median": 63.35,
+                "max": 69.0
+              },
+              "uclk_mhz": {
+                "min": 1291.9,
+                "median": 1397.5,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [
+              "compattelrunner.exe",
+              "mousocoreworker.exe",
+              "svchost.exe"
+            ],
+            "births_recorded": [
+              "compattelrunner.exe",
+              "mousocoreworker.exe",
+              "svchost.exe"
+            ],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": true,
+            "taint": [
+              "host_cpu_max 12.7% > 10%"
+            ]
+          },
+          {
+            "name": "rc-q27-10111940-P-b1-p-r2-short",
+            "start": "2026-10-11T23:46:40.6217808Z",
+            "end": "2026-10-11T23:47:10.7918508Z",
+            "n_samples": 31,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 3294.1,
+                "median": 4921.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.07,
+                "median": 1.37,
+                "max": 1.69
+              },
+              "fclk_mhz": {
+                "min": 1482.8,
+                "median": 1497.3,
+                "max": 1574.8
+              },
+              "free_ram_gb": {
+                "min": 17.52,
+                "median": 17.55,
+                "max": 17.8
+              },
+              "gpu_clk_mhz": {
+                "min": 1336.0,
+                "median": 3100.0,
+                "max": 3100.0
+              },
+              "gpu_temp_c": {
+                "min": 52.2,
+                "median": 60.1,
+                "max": 61.1
+              },
+              "host_cpu_pct": {
+                "min": 5.47,
+                "median": 6.21,
+                "max": 10.14
+              },
+              "mclk_mhz": {
+                "min": 2395.7,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 23.8,
+                "median": 48.1,
+                "max": 49.2
+              },
+              "tctl_c": {
+                "min": 61.1,
+                "median": 64.0,
+                "max": 65.2
+              },
+              "uclk_mhz": {
+                "min": 1280.6,
+                "median": 1397.5,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [
+              "actionsserver.exe",
+              "appactions.exe",
+              "backgroundtaskhost.exe",
+              "runtimebroker.exe",
+              "securityhealthhost.exe",
+              "svchost.exe"
+            ],
+            "births_recorded": [
+              "actionsserver.exe",
+              "appactions.exe",
+              "backgroundtaskhost.exe",
+              "runtimebroker.exe",
+              "securityhealthhost.exe",
+              "svchost.exe"
+            ],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": true,
+            "taint": [
+              "host_cpu_max 10.1% > 10%"
+            ]
+          },
+          {
+            "name": "rc-q27-10111940-P-b1-p-r2-long",
+            "start": "2026-10-11T23:47:10.8095256Z",
+            "end": "2026-10-11T23:47:44.9883559Z",
+            "n_samples": 34,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 2934.7,
+                "median": 4921.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.06,
+                "median": 1.33,
+                "max": 2.98
+              },
+              "fclk_mhz": {
+                "min": 1497.3,
+                "median": 1497.3,
+                "max": 1510.4
+              },
+              "free_ram_gb": {
+                "min": 17.52,
+                "median": 17.56,
+                "max": 17.84
+              },
+              "gpu_clk_mhz": {
+                "min": 2039.0,
+                "median": 3100.0,
+                "max": 3100.0
+              },
+              "gpu_temp_c": {
+                "min": 57.4,
+                "median": 60.9,
+                "max": 71.6
+              },
+              "host_cpu_pct": {
+                "min": 5.02,
+                "median": 8.61,
+                "max": 11.49
+              },
+              "mclk_mhz": {
+                "min": 2395.7,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 36.3,
+                "median": 45.75,
+                "max": 66.7
+              },
+              "tctl_c": {
+                "min": 63.5,
+                "median": 65.15,
+                "max": 71.9
+              },
+              "uclk_mhz": {
+                "min": 1315.1,
+                "median": 1397.5,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [
+              "compattelrunner.exe"
+            ],
+            "births_recorded": [
+              "compattelrunner.exe"
+            ],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": true,
+            "taint": [
+              "host_cpu_max 11.5% > 10%"
+            ]
+          }
+        ],
+        "clean_rounds": 1,
+        "cpu_bar_pct": 10.0,
+        "ignored_procs": []
+      },
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.09.004.357 I slot print_timing: id  0 | task 0 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 1634107 us/7, process 0 us, save 0 us, restore 0 us\r",
+        "0.38.916.956 I slot print_timing: id  0 | task 10 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 27629244 us/127, process 0 us, save 0 us, restore 0 us\r",
+        "1.14.810.863 I slot print_timing: id  0 | task 140 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 28048626 us/127, process 0 us, save 0 us, restore 0 us\r",
+        "1.45.599.781 I slot print_timing: id  0 | task 271 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 27721505 us/127, process 0 us, save 0 us, restore 0 us\r",
+        "2.21.083.352 I slot print_timing: id  0 | task 401 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 28194732 us/127, process 0 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-11T23:47:49.2058893Z"
+    },
+    {
+      "arm": "P-b2-p",
+      "args": [
+        "-m",
+        "C:\\ArifiLabs\\models\\hf\\huihui-ai\\Huihui-Qwen3.8-27B-abliterated-UD-GGUF\\Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf",
+        "-dev",
+        "Vulkan0",
+        "-ngl",
+        "999",
+        "-fa",
+        "on",
+        "-c",
+        "8192",
+        "-b",
+        "1024",
+        "-ub",
+        "512",
+        "-t",
+        "16",
+        "-tb",
+        "32",
+        "-ctk",
+        "q8_0",
+        "-ctv",
+        "q8_0",
+        "--parallel",
+        "1",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "--ctx-checkpoints",
+        "32",
+        "--ctx-checkpoints-device",
+        "off",
+        "--ctx-checkpoints-toolcall",
+        "on"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 1242263552.0,
+      "started_utc": "2026-10-11T23:48:21.6607813Z",
+      "healthy": true,
+      "peak_ws_bytes": 1604599808,
+      "peak_private_bytes": 20295421952,
+      "min_avail_bytes": 17213177856,
+      "avail_before_bytes": 19012444160,
+      "requests": [
+        {
+          "tag": "rc-q27-10111940-P-b2-p-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=15.54 ttft_ms=807.9 gen_n=8 decode_tps=4.28 draft=None/None"
+        },
+        {
+          "tag": "rc-q27-10111940-P-b2-p-r1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=16.56 ttft_ms=762.6 gen_n=128 decode_tps=4.55 draft=None/None"
+        },
+        {
+          "tag": "rc-q27-10111940-P-b2-p-r1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=103.64 ttft_ms=5882.5 gen_n=128 decode_tps=4.55 draft=None/None"
+        },
+        {
+          "tag": "rc-q27-10111940-P-b2-p-r2-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=18.37 ttft_ms=854.6 gen_n=128 decode_tps=4.56 draft=None/None"
+        },
+        {
+          "tag": "rc-q27-10111940-P-b2-p-r2-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=107.82 ttft_ms=5649.4 gen_n=128 decode_tps=4.54 draft=None/None"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 4980,
+      "load_s": 5.6,
+      "box": {
+        "rounds": [
+          {
+            "name": "rc-q27-10111940-P-b2-p-r1-short",
+            "start": "2026-10-11T23:48:32.5546005Z",
+            "end": "2026-10-11T23:49:02.7471857Z",
+            "n_samples": 30,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 3294.1,
+                "median": 4921.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.39,
+                "median": 1.37,
+                "max": 1.64
+              },
+              "fclk_mhz": {
+                "min": 1469.1,
+                "median": 1497.3,
+                "max": 1497.3
+              },
+              "free_ram_gb": {
+                "min": 17.73,
+                "median": 17.76,
+                "max": 17.79
+              },
+              "gpu_clk_mhz": {
+                "min": 1374.0,
+                "median": 3100.0,
+                "max": 3100.0
+              },
+              "gpu_temp_c": {
+                "min": 47.7,
+                "median": 56.3,
+                "max": 58.4
+              },
+              "host_cpu_pct": {
+                "min": 5.11,
+                "median": 6.58,
+                "max": 9.67
+              },
+              "mclk_mhz": {
+                "min": 2395.7,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 24.7,
+                "median": 46.3,
+                "max": 47.9
+              },
+              "tctl_c": {
+                "min": 56.4,
+                "median": 60.4,
+                "max": 62.4
+              },
+              "uclk_mhz": {
+                "min": 1288.4,
+                "median": 1397.5,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [
+              "compattelrunner.exe"
+            ],
+            "births_recorded": [
+              "compattelrunner.exe"
+            ],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": false,
+            "taint": []
+          },
+          {
+            "name": "rc-q27-10111940-P-b2-p-r1-long",
+            "start": "2026-10-11T23:49:02.7618413Z",
+            "end": "2026-10-11T23:49:36.9475464Z",
+            "n_samples": 34,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 3294.1,
+                "median": 4921.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.2,
+                "median": 1.39,
+                "max": 4.04
+              },
+              "fclk_mhz": {
+                "min": 1475.9,
+                "median": 1497.3,
+                "max": 1539.4
+              },
+              "free_ram_gb": {
+                "min": 17.38,
+                "median": 17.41,
+                "max": 17.76
+              },
+              "gpu_clk_mhz": {
+                "min": 1597.0,
+                "median": 3100.0,
+                "max": 3100.0
+              },
+              "gpu_temp_c": {
+                "min": 52.4,
+                "median": 60.3,
+                "max": 69.7
+              },
+              "host_cpu_pct": {
+                "min": 5.19,
+                "median": 5.91,
+                "max": 9.9
+              },
+              "mclk_mhz": {
+                "min": 2395.7,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 28.7,
+                "median": 47.5,
+                "max": 67.0
+              },
+              "tctl_c": {
+                "min": 60.8,
+                "median": 64.8,
+                "max": 69.4
+              },
+              "uclk_mhz": {
+                "min": 1317.1,
+                "median": 1397.5,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [
+              "compattelrunner.exe"
+            ],
+            "births_recorded": [
+              "compattelrunner.exe"
+            ],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": false,
+            "taint": []
+          },
+          {
+            "name": "rc-q27-10111940-P-b2-p-r2-short",
+            "start": "2026-10-11T23:49:36.9604016Z",
+            "end": "2026-10-11T23:50:07.1166639Z",
+            "n_samples": 30,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 3294.1,
+                "median": 3294.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 1.04,
+                "median": 1.42,
+                "max": 2.05
+              },
+              "fclk_mhz": {
+                "min": 1497.3,
+                "median": 1497.3,
+                "max": 1550.7
+              },
+              "free_ram_gb": {
+                "min": 17.22,
+                "median": 17.26,
+                "max": 17.4
+              },
+              "gpu_clk_mhz": {
+                "min": 2715.0,
+                "median": 3100.0,
+                "max": 3100.0
+              },
+              "gpu_temp_c": {
+                "min": 59.2,
+                "median": 61.0,
+                "max": 61.7
+              },
+              "host_cpu_pct": {
+                "min": 5.14,
+                "median": 6.21,
+                "max": 10.18
+              },
+              "mclk_mhz": {
+                "min": 2795.0,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 42.7,
+                "median": 48.0,
+                "max": 48.7
+              },
+              "tctl_c": {
+                "min": 64.1,
+                "median": 65.9,
+                "max": 67.1
+              },
+              "uclk_mhz": {
+                "min": 1367.2,
+                "median": 1397.5,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [],
+            "births_recorded": [],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": true,
+            "taint": [
+              "host_cpu_max 10.2% > 10%"
+            ]
+          },
+          {
+            "name": "rc-q27-10111940-P-b2-p-r2-long",
+            "start": "2026-10-11T23:50:07.1290579Z",
+            "end": "2026-10-11T23:50:41.313773Z",
+            "n_samples": 35,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 1996.4,
+                "median": 4921.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.07,
+                "median": 1.35,
+                "max": 3.01
+              },
+              "fclk_mhz": {
+                "min": 1487.0,
+                "median": 1497.3,
+                "max": 1521.5
+              },
+              "free_ram_gb": {
+                "min": 17.25,
+                "median": 17.41,
+                "max": 17.55
+              },
+              "gpu_clk_mhz": {
+                "min": 1925.0,
+                "median": 3100.0,
+                "max": 3100.0
+              },
+              "gpu_temp_c": {
+                "min": 57.3,
+                "median": 61.7,
+                "max": 72.5
+              },
+              "host_cpu_pct": {
+                "min": 4.96,
+                "median": 7.17,
+                "max": 10.44
+              },
+              "mclk_mhz": {
+                "min": 2395.7,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 32.9,
+                "median": 47.0,
+                "max": 67.0
+              },
+              "tctl_c": {
+                "min": 64.6,
+                "median": 67.5,
+                "max": 72.4
+              },
+              "uclk_mhz": {
+                "min": 1328.9,
+                "median": 1397.5,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [
+              "compattelrunner.exe"
+            ],
+            "births_recorded": [
+              "compattelrunner.exe"
+            ],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": true,
+            "taint": [
+              "host_cpu_max 10.4% > 10%"
+            ]
+          }
+        ],
+        "clean_rounds": 2,
+        "cpu_bar_pct": 10.0,
+        "ignored_procs": []
+      },
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.08.149.944 I slot print_timing: id  0 | task 0 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 1631349 us/7, process 0 us, save 0 us, restore 0 us\r",
+        "0.38.395.014 I slot print_timing: id  0 | task 10 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 27832760 us/127, process 0 us, save 0 us, restore 0 us\r",
+        "1.13.777.074 I slot print_timing: id  0 | task 140 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 27877148 us/127, process 0 us, save 0 us, restore 0 us\r",
+        "1.42.844.073 I slot print_timing: id  0 | task 271 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 27776869 us/127, process 0 us, save 0 us, restore 0 us\r",
+        "2.17.965.991 I slot print_timing: id  0 | task 401 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 27938575 us/127, process 0 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-11T23:50:45.5789110Z"
+    },
+    {
+      "arm": "P-a2-g",
+      "args": [
+        "-m",
+        "C:\\ArifiLabs\\models\\hf\\huihui-ai\\Huihui-Qwen3.8-27B-abliterated-UD-GGUF\\Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf",
+        "-dev",
+        "Vulkan0",
+        "-ngl",
+        "999",
+        "-fa",
+        "on",
+        "-c",
+        "8192",
+        "-b",
+        "1024",
+        "-ub",
+        "512",
+        "-t",
+        "16",
+        "-tb",
+        "32",
+        "-ctk",
+        "q8_0",
+        "-ctv",
+        "q8_0",
+        "--parallel",
+        "1",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "--ctx-checkpoints",
+        "32",
+        "--ctx-checkpoints-device",
+        "off",
+        "--ctx-checkpoints-toolcall",
+        "on"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 1241628672.0,
+      "started_utc": "2026-10-11T23:51:18.0208307Z",
+      "healthy": true,
+      "peak_ws_bytes": 1602482176,
+      "peak_private_bytes": 20321185792,
+      "min_avail_bytes": 14548455424,
+      "avail_before_bytes": 18416398336,
+      "requests": [
+        {
+          "tag": "rc-q27-10111940-P-a2-g-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=15.69 ttft_ms=858.4 gen_n=8 decode_tps=4.05 draft=None/None"
+        },
+        {
+          "tag": "rc-q27-10111940-P-a2-g-r1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=17.94 ttft_ms=688.0 gen_n=128 decode_tps=4.4 draft=None/None"
+        },
+        {
+          "tag": "rc-q27-10111940-P-a2-g-r1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=102.5 ttft_ms=5895.5 gen_n=128 decode_tps=4.52 draft=None/None"
+        },
+        {
+          "tag": "rc-q27-10111940-P-a2-g-r2-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=17.45 ttft_ms=852.9 gen_n=128 decode_tps=4.48 draft=None/None"
+        },
+        {
+          "tag": "rc-q27-10111940-P-a2-g-r2-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=107.33 ttft_ms=5650.5 gen_n=128 decode_tps=4.48 draft=None/None"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 3516,
+      "load_s": 10.6,
+      "box": {
+        "rounds": [
+          {
+            "name": "rc-q27-10111940-P-a2-g-r1-short",
+            "start": "2026-10-11T23:51:33.9544125Z",
+            "end": "2026-10-11T23:52:04.1004996Z",
+            "n_samples": 30,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 3104.4,
+                "median": 4921.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.98,
+                "median": 1.43,
+                "max": 1.75
+              },
+              "fclk_mhz": {
+                "min": 1497.3,
+                "median": 1497.3,
+                "max": 1808.0
+              },
+              "free_ram_gb": {
+                "min": 15.13,
+                "median": 15.75,
+                "max": 16.35
+              },
+              "gpu_clk_mhz": {
+                "min": 2054.0,
+                "median": 3100.0,
+                "max": 3100.0
+              },
+              "gpu_temp_c": {
+                "min": 49.8,
+                "median": 57.0,
+                "max": 58.5
+              },
+              "host_cpu_pct": {
+                "min": 5.47,
+                "median": 10.29,
+                "max": 20.99
+              },
+              "mclk_mhz": {
+                "min": 2795.0,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 35.8,
+                "median": 45.4,
+                "max": 51.9
+              },
+              "tctl_c": {
+                "min": 56.2,
+                "median": 58.4,
+                "max": 61.1
+              },
+              "uclk_mhz": {
+                "min": 1397.5,
+                "median": 1397.5,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [
+              "sdxhelper.exe"
+            ],
+            "births_recorded": [
+              "sdxhelper.exe"
+            ],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": true,
+            "taint": [
+              "host_cpu_max 21.0% > 10%"
+            ]
+          },
+          {
+            "name": "rc-q27-10111940-P-a2-g-r1-long",
+            "start": "2026-10-11T23:52:04.1130435Z",
+            "end": "2026-10-11T23:52:38.3021937Z",
+            "n_samples": 34,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 2775.0,
+                "median": 4921.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.06,
+                "median": 1.46,
+                "max": 4.31
+              },
+              "fclk_mhz": {
+                "min": 1454.3,
+                "median": 1497.3,
+                "max": 1543.1
+              },
+              "free_ram_gb": {
+                "min": 15.16,
+                "median": 15.46,
+                "max": 15.75
+              },
+              "gpu_clk_mhz": {
+                "min": 2174.0,
+                "median": 3100.0,
+                "max": 3100.0
+              },
+              "gpu_temp_c": {
+                "min": 55.5,
+                "median": 60.5,
+                "max": 70.4
+              },
+              "host_cpu_pct": {
+                "min": 4.75,
+                "median": 5.81,
+                "max": 13.22
+              },
+              "mclk_mhz": {
+                "min": 2795.0,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 37.0,
+                "median": 46.5,
+                "max": 65.6
+              },
+              "tctl_c": {
+                "min": 61.1,
+                "median": 63.15,
+                "max": 70.2
+              },
+              "uclk_mhz": {
+                "min": 1345.0,
+                "median": 1397.5,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [
+              "compattelrunner.exe"
+            ],
+            "births_recorded": [
+              "compattelrunner.exe"
+            ],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": true,
+            "taint": [
+              "host_cpu_max 13.2% > 10%"
+            ]
+          },
+          {
+            "name": "rc-q27-10111940-P-a2-g-r2-short",
+            "start": "2026-10-11T23:52:38.3130437Z",
+            "end": "2026-10-11T23:53:08.4876212Z",
+            "n_samples": 31,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 3294.1,
+                "median": 4921.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.39,
+                "median": 1.43,
+                "max": 2.08
+              },
+              "fclk_mhz": {
+                "min": 1497.3,
+                "median": 1497.3,
+                "max": 1647.0
+              },
+              "free_ram_gb": {
+                "min": 14.96,
+                "median": 17.84,
+                "max": 17.87
+              },
+              "gpu_clk_mhz": {
+                "min": 2545.0,
+                "median": 3100.0,
+                "max": 3100.0
+              },
+              "gpu_temp_c": {
+                "min": 59.6,
+                "median": 61.5,
+                "max": 62.0
+              },
+              "host_cpu_pct": {
+                "min": 5.01,
+                "median": 6.05,
+                "max": 19.21
+              },
+              "mclk_mhz": {
+                "min": 2795.0,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 43.2,
+                "median": 46.9,
+                "max": 49.0
+              },
+              "tctl_c": {
+                "min": 62.6,
+                "median": 63.5,
+                "max": 64.6
+              },
+              "uclk_mhz": {
+                "min": 1391.0,
+                "median": 1397.5,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [],
+            "births_recorded": [],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": true,
+            "taint": [
+              "host_cpu_max 19.2% > 10%"
+            ]
+          },
+          {
+            "name": "rc-q27-10111940-P-a2-g-r2-long",
+            "start": "2026-10-11T23:53:08.5001103Z",
+            "end": "2026-10-11T23:53:42.7230729Z",
+            "n_samples": 34,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 2715.1,
+                "median": 3294.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.06,
+                "median": 1.42,
+                "max": 2.92
+              },
+              "fclk_mhz": {
+                "min": 1497.3,
+                "median": 1497.3,
+                "max": 1501.2
+              },
+              "free_ram_gb": {
+                "min": 17.94,
+                "median": 18.0,
+                "max": 18.16
+              },
+              "gpu_clk_mhz": {
+                "min": 1940.0,
+                "median": 3100.0,
+                "max": 3100.0
+              },
+              "gpu_temp_c": {
+                "min": 56.4,
+                "median": 62.0,
+                "max": 73.1
+              },
+              "host_cpu_pct": {
+                "min": 4.87,
+                "median": 8.2,
+                "max": 10.14
+              },
+              "mclk_mhz": {
+                "min": 2795.0,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 30.7,
+                "median": 46.8,
+                "max": 66.2
+              },
+              "tctl_c": {
+                "min": 64.6,
+                "median": 65.8,
+                "max": 73.0
+              },
+              "uclk_mhz": {
+                "min": 1310.1,
+                "median": 1397.5,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [
+              "compattelrunner.exe"
+            ],
+            "births_recorded": [
+              "compattelrunner.exe"
+            ],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": true,
+            "taint": [
+              "host_cpu_max 10.1% > 10%"
+            ]
+          }
+        ],
+        "clean_rounds": 0,
+        "cpu_bar_pct": 10.0,
+        "ignored_procs": []
+      },
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.13.323.657 I slot print_timing: id  0 | task 0 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 1724386 us/7, process 0 us, save 0 us, restore 0 us\r",
+        "0.44.274.668 I slot print_timing: id  0 | task 10 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 28847548 us/127, process 0 us, save 0 us, restore 0 us\r",
+        "1.18.832.744 I slot print_timing: id  0 | task 140 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 28022781 us/127, process 0 us, save 0 us, restore 0 us\r",
+        "1.48.256.474 I slot print_timing: id  0 | task 271 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 28296208 us/127, process 0 us, save 0 us, restore 0 us\r",
+        "2.23.210.315 I slot print_timing: id  0 | task 401 | spec round cost  = draft 0 us/0, verify 0 us/0, plain 28263512 us/127, process 0 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-11T23:53:46.9085541Z"
+    },
+    {
+      "arm": "M-a1-g",
+      "args": [
+        "-m",
+        "C:\\ArifiLabs\\models\\hf\\huihui-ai\\Huihui-Qwen3.8-27B-abliterated-UD-GGUF\\Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf",
+        "-dev",
+        "Vulkan0",
+        "-ngl",
+        "999",
+        "-fa",
+        "on",
+        "-c",
+        "8192",
+        "-b",
+        "1024",
+        "-ub",
+        "512",
+        "-t",
+        "16",
+        "-tb",
+        "32",
+        "-ctk",
+        "q8_0",
+        "-ctv",
+        "q8_0",
+        "--parallel",
+        "1",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "--ctx-checkpoints",
+        "32",
+        "--ctx-checkpoints-device",
+        "off",
+        "--ctx-checkpoints-toolcall",
+        "on",
+        "--spec-type",
+        "draft-mtp",
+        "--spec-draft-n-max",
+        "3",
+        "--spec-draft-p-min",
+        "0.5"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 1251868672.0,
+      "started_utc": "2026-10-11T23:54:19.3957460Z",
+      "healthy": true,
+      "peak_ws_bytes": 1725513728,
+      "peak_private_bytes": 21603434496,
+      "min_avail_bytes": 17673551872,
+      "avail_before_bytes": 19589246976,
+      "requests": [
+        {
+          "tag": "rc-q27-10111940-M-a1-g-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=12.55 ttft_ms=984.4 gen_n=8 decode_tps=7.97 draft=4/5"
+        },
+        {
+          "tag": "rc-q27-10111940-M-a1-g-r1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=18.4 ttft_ms=676.6 gen_n=128 decode_tps=10.2 draft=86/100"
+        },
+        {
+          "tag": "rc-q27-10111940-M-a1-g-r1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=100.5 ttft_ms=6047.7 gen_n=128 decode_tps=9.79 draft=84/101"
+        },
+        {
+          "tag": "rc-q27-10111940-M-a1-g-r2-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=15.96 ttft_ms=953.9 gen_n=128 decode_tps=9.88 draft=85/97"
+        },
+        {
+          "tag": "rc-q27-10111940-M-a1-g-r2-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=104.06 ttft_ms=5845.2 gen_n=128 decode_tps=9.87 draft=84/101"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 7232,
+      "load_s": 7.6,
+      "box": {
+        "rounds": [
+          {
+            "name": "rc-q27-10111940-M-a1-g-r1-short",
+            "start": "2026-10-11T23:54:32.2914859Z",
+            "end": "2026-10-11T23:54:46.3699975Z",
+            "n_samples": 14,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 4921.1,
+                "median": 4921.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 1.44,
+                "median": 1.79,
+                "max": 2.03
+              },
+              "fclk_mhz": {
+                "min": 1497.3,
+                "median": 1500.85,
+                "max": 1517.4
+              },
+              "free_ram_gb": {
+                "min": 18.22,
+                "median": 18.24,
+                "max": 18.38
+              },
+              "gpu_clk_mhz": {
+                "min": 1415.0,
+                "median": 2953.5,
+                "max": 3025.0
+              },
+              "gpu_temp_c": {
+                "min": 50.3,
+                "median": 61.95,
+                "max": 66.0
+              },
+              "host_cpu_pct": {
+                "min": 5.04,
+                "median": 5.71,
+                "max": 7.47
+              },
+              "mclk_mhz": {
+                "min": 2395.7,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 33.2,
+                "median": 58.6,
+                "max": 61.5
+              },
+              "tctl_c": {
+                "min": 57.9,
+                "median": 64.0,
+                "max": 67.4
+              },
+              "uclk_mhz": {
+                "min": 1307.7,
+                "median": 1397.0,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [],
+            "births_recorded": [],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": false,
+            "taint": []
+          },
+          {
+            "name": "rc-q27-10111940-M-a1-g-r1-long",
+            "start": "2026-10-11T23:54:46.3834159Z",
+            "end": "2026-10-11T23:55:06.4941269Z",
+            "n_samples": 20,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 2495.5,
+                "median": 4921.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.0,
+                "median": 1.68,
+                "max": 4.01
+              },
+              "fclk_mhz": {
+                "min": 1450.4,
+                "median": 1497.3,
+                "max": 1571.0
+              },
+              "free_ram_gb": {
+                "min": 17.86,
+                "median": 17.87,
+                "max": 18.23
+              },
+              "gpu_clk_mhz": {
+                "min": 2118.0,
+                "median": 2974.5,
+                "max": 3010.0
+              },
+              "gpu_temp_c": {
+                "min": 54.5,
+                "median": 67.4,
+                "max": 70.6
+              },
+              "host_cpu_pct": {
+                "min": 5.08,
+                "median": 6.24,
+                "max": 10.81
+              },
+              "mclk_mhz": {
+                "min": 2795.0,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 32.3,
+                "median": 61.4,
+                "max": 66.3
+              },
+              "tctl_c": {
+                "min": 64.5,
+                "median": 68.5,
+                "max": 70.5
+              },
+              "uclk_mhz": {
+                "min": 1315.7,
+                "median": 1396.85,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [],
+            "births_recorded": [],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": true,
+            "taint": [
+              "host_cpu_max 10.8% > 10%"
+            ]
+          },
+          {
+            "name": "rc-q27-10111940-M-a1-g-r2-short",
+            "start": "2026-10-11T23:55:06.5054422Z",
+            "end": "2026-10-11T23:55:20.5836059Z",
+            "n_samples": 14,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 3169.3,
+                "median": 3294.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 1.25,
+                "median": 1.63,
+                "max": 2.21
+              },
+              "fclk_mhz": {
+                "min": 1448.1,
+                "median": 1497.3,
+                "max": 1538.6
+              },
+              "free_ram_gb": {
+                "min": 17.52,
+                "median": 17.68,
+                "max": 17.7
+              },
+              "gpu_clk_mhz": {
+                "min": 2009.0,
+                "median": 2986.0,
+                "max": 3035.0
+              },
+              "gpu_temp_c": {
+                "min": 54.5,
+                "median": 67.05,
+                "max": 69.1
+              },
+              "host_cpu_pct": {
+                "min": 5.28,
+                "median": 8.63,
+                "max": 11.28
+              },
+              "mclk_mhz": {
+                "min": 2795.0,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 28.3,
+                "median": 58.25,
+                "max": 61.0
+              },
+              "tctl_c": {
+                "min": 66.1,
+                "median": 68.1,
+                "max": 69.6
+              },
+              "uclk_mhz": {
+                "min": 1274.7,
+                "median": 1397.5,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [
+              "compattelrunner.exe"
+            ],
+            "births_recorded": [
+              "compattelrunner.exe"
+            ],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": true,
+            "taint": [
+              "host_cpu_max 11.3% > 10%"
+            ]
+          },
+          {
+            "name": "rc-q27-10111940-M-a1-g-r2-long",
+            "start": "2026-10-11T23:55:20.5971951Z",
+            "end": "2026-10-11T23:55:40.7150988Z",
+            "n_samples": 20,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 1559.3,
+                "median": 3294.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.06,
+                "median": 1.66,
+                "max": 2.59
+              },
+              "fclk_mhz": {
+                "min": 1450.4,
+                "median": 1497.3,
+                "max": 1521.1
+              },
+              "free_ram_gb": {
+                "min": 17.7,
+                "median": 17.87,
+                "max": 18.18
+              },
+              "gpu_clk_mhz": {
+                "min": 2648.0,
+                "median": 2961.0,
+                "max": 3045.0
+              },
+              "gpu_temp_c": {
+                "min": 65.2,
+                "median": 70.45,
+                "max": 72.1
+              },
+              "host_cpu_pct": {
+                "min": 4.55,
+                "median": 6.08,
+                "max": 11.35
+              },
+              "mclk_mhz": {
+                "min": 2395.7,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 53.0,
+                "median": 61.85,
+                "max": 65.7
+              },
+              "tctl_c": {
+                "min": 69.4,
+                "median": 70.95,
+                "max": 72.6
+              },
+              "uclk_mhz": {
+                "min": 1352.2,
+                "median": 1393.85,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [],
+            "births_recorded": [],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": true,
+            "taint": [
+              "host_cpu_max 11.3% > 10%"
+            ]
+          }
+        ],
+        "clean_rounds": 1,
+        "cpu_bar_pct": 10.0,
+        "ignored_procs": []
+      },
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.06.923.031 I common_speculative_init_result: creating MTP draft context against the target model 'C:\\ArifiLabs\\models\\hf\\huihui-ai\\Huihui-Qwen3.8-27B-abliterated-UD-GGUF\\Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf'\r",
+        "0.09.693.031 I slot print_timing: id  0 | task 0 | draft acceptance = 0.80000 (    4 accepted /     5 generated), mean len =  2.33\r",
+        "0.09.693.032 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 4 accepted)\r",
+        "0.09.693.034 I slot print_timing: id  0 | task 0 | spec round cost  = draft 138147 us/3, verify 726535 us/3, plain 0 us/0, process 5004 us, save 0 us, restore 0 us\r",
+        "0.24.898.495 I slot print_timing: id  0 | task 6 | draft acceptance = 0.86000 (   86 accepted /   100 generated), mean len =  3.21\r",
+        "0.24.898.496 I slot print_timing: id  0 | task 6 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 86 accepted)\r",
+        "0.24.898.498 I slot print_timing: id  0 | task 6 | spec round cost  = draft 2266478 us/41, verify 9518637 us/39, plain 543309 us/2, process 69163 us, save 0 us, restore 0 us\r",
+        "0.44.858.691 I slot print_timing: id  0 | task 50 | draft acceptance = 0.83168 (   84 accepted /   101 generated), mean len =  3.21\r",
+        "0.44.858.692 I slot print_timing: id  0 | task 50 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 84 accepted)\r",
+        "0.44.858.694 I slot print_timing: id  0 | task 50 | spec round cost  = draft 2305610 us/42, verify 9397278 us/38, plain 1115709 us/5, process 73215 us, save 0 us, restore 0 us\r",
+        "0.59.770.157 I slot print_timing: id  0 | task 97 | draft acceptance = 0.87629 (   85 accepted /    97 generated), mean len =  3.12\r",
+        "0.59.770.160 I slot print_timing: id  0 | task 97 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 85 accepted)\r",
+        "0.59.770.162 I slot print_timing: id  0 | task 97 | spec round cost  = draft 2312521 us/42, verify 9839974 us/40, plain 457301 us/2, process 103331 us, save 0 us, restore 0 us\r",
+        "1.18.774.764 I slot print_timing: id  0 | task 142 | draft acceptance = 0.83168 (   84 accepted /   101 generated), mean len =  3.21\r",
+        "1.18.774.765 I slot print_timing: id  0 | task 142 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 84 accepted)\r",
+        "1.18.774.767 I slot print_timing: id  0 | task 142 | spec round cost  = draft 2311878 us/42, verify 9312506 us/38, plain 1117156 us/5, process 70523 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-11T23:55:44.3365692Z"
+    },
+    {
+      "arm": "M-b1-p",
+      "args": [
+        "-m",
+        "C:\\ArifiLabs\\models\\hf\\huihui-ai\\Huihui-Qwen3.8-27B-abliterated-UD-GGUF\\Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf",
+        "-dev",
+        "Vulkan0",
+        "-ngl",
+        "999",
+        "-fa",
+        "on",
+        "-c",
+        "8192",
+        "-b",
+        "1024",
+        "-ub",
+        "512",
+        "-t",
+        "16",
+        "-tb",
+        "32",
+        "-ctk",
+        "q8_0",
+        "-ctv",
+        "q8_0",
+        "--parallel",
+        "1",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "--ctx-checkpoints",
+        "32",
+        "--ctx-checkpoints-device",
+        "off",
+        "--ctx-checkpoints-toolcall",
+        "on",
+        "--spec-type",
+        "draft-mtp",
+        "--spec-draft-n-max",
+        "3",
+        "--spec-draft-p-min",
+        "0.5"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 1253277696.0,
+      "started_utc": "2026-10-11T23:56:16.8410919Z",
+      "healthy": true,
+      "peak_ws_bytes": 1726480384,
+      "peak_private_bytes": 21597671424,
+      "min_avail_bytes": 17731313664,
+      "avail_before_bytes": 19605385216,
+      "requests": [
+        {
+          "tag": "rc-q27-10111940-M-b1-p-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=13.0 ttft_ms=962.9 gen_n=8 decode_tps=7.94 draft=4/5"
+        },
+        {
+          "tag": "rc-q27-10111940-M-b1-p-r1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=16.65 ttft_ms=753.6 gen_n=128 decode_tps=10.26 draft=86/100"
+        },
+        {
+          "tag": "rc-q27-10111940-M-b1-p-r1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=99.64 ttft_ms=6043.4 gen_n=128 decode_tps=9.58 draft=84/101"
+        },
+        {
+          "tag": "rc-q27-10111940-M-b1-p-r2-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=15.64 ttft_ms=950.8 gen_n=128 decode_tps=9.62 draft=85/97"
+        },
+        {
+          "tag": "rc-q27-10111940-M-b1-p-r2-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=106.12 ttft_ms=5745.2 gen_n=128 decode_tps=9.5 draft=84/101"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 16668,
+      "load_s": 6.6,
+      "box": {
+        "rounds": [
+          {
+            "name": "rc-q27-10111940-M-b1-p-r1-short",
+            "start": "2026-10-11T23:56:28.7408537Z",
+            "end": "2026-10-11T23:56:42.8209419Z",
+            "n_samples": 14,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 3294.1,
+                "median": 4921.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 1.25,
+                "median": 1.67,
+                "max": 2.03
+              },
+              "fclk_mhz": {
+                "min": 1402.2,
+                "median": 1497.3,
+                "max": 1527.6
+              },
+              "free_ram_gb": {
+                "min": 18.23,
+                "median": 18.25,
+                "max": 18.39
+              },
+              "gpu_clk_mhz": {
+                "min": 1505.0,
+                "median": 2958.5,
+                "max": 3040.0
+              },
+              "gpu_temp_c": {
+                "min": 47.9,
+                "median": 60.6,
+                "max": 64.7
+              },
+              "host_cpu_pct": {
+                "min": 4.36,
+                "median": 5.1,
+                "max": 9.88
+              },
+              "mclk_mhz": {
+                "min": 2395.7,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 25.9,
+                "median": 59.3,
+                "max": 60.2
+              },
+              "tctl_c": {
+                "min": 58.1,
+                "median": 63.15,
+                "max": 66.6
+              },
+              "uclk_mhz": {
+                "min": 1233.4,
+                "median": 1397.5,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [],
+            "births_recorded": [],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": false,
+            "taint": []
+          },
+          {
+            "name": "rc-q27-10111940-M-b1-p-r1-long",
+            "start": "2026-10-11T23:56:42.8340267Z",
+            "end": "2026-10-11T23:57:02.9280533Z",
+            "n_samples": 20,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 3154.3,
+                "median": 4921.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.06,
+                "median": 1.75,
+                "max": 4.14
+              },
+              "fclk_mhz": {
+                "min": 1447.6,
+                "median": 1497.3,
+                "max": 1525.6
+              },
+              "free_ram_gb": {
+                "min": 17.76,
+                "median": 17.85,
+                "max": 18.24
+              },
+              "gpu_clk_mhz": {
+                "min": 1943.0,
+                "median": 2960.5,
+                "max": 3038.0
+              },
+              "gpu_temp_c": {
+                "min": 53.6,
+                "median": 66.5,
+                "max": 69.7
+              },
+              "host_cpu_pct": {
+                "min": 5.03,
+                "median": 8.79,
+                "max": 24.45
+              },
+              "mclk_mhz": {
+                "min": 2795.0,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 32.2,
+                "median": 59.9,
+                "max": 66.3
+              },
+              "tctl_c": {
+                "min": 63.9,
+                "median": 68.2,
+                "max": 69.4
+              },
+              "uclk_mhz": {
+                "min": 1305.2,
+                "median": 1396.5,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [
+              "compattelrunner.exe",
+              "dllhost.exe",
+              "svchost.exe"
+            ],
+            "births_recorded": [
+              "compattelrunner.exe",
+              "dllhost.exe",
+              "svchost.exe"
+            ],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": true,
+            "taint": [
+              "host_cpu_max 24.4% > 10%"
+            ]
+          },
+          {
+            "name": "rc-q27-10111940-M-b1-p-r2-short",
+            "start": "2026-10-11T23:57:02.9405284Z",
+            "end": "2026-10-11T23:57:19.0140399Z",
+            "n_samples": 16,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 3144.3,
+                "median": 4738.95,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.13,
+                "median": 1.69,
+                "max": 2.02
+              },
+              "fclk_mhz": {
+                "min": 1447.6,
+                "median": 1497.3,
+                "max": 1665.7
+              },
+              "free_ram_gb": {
+                "min": 17.6,
+                "median": 17.77,
+                "max": 17.81
+              },
+              "gpu_clk_mhz": {
+                "min": 1763.0,
+                "median": 2854.0,
+                "max": 3012.0
+              },
+              "gpu_temp_c": {
+                "min": 55.8,
+                "median": 67.1,
+                "max": 68.4
+              },
+              "host_cpu_pct": {
+                "min": 9.58,
+                "median": 11.75,
+                "max": 31.33
+              },
+              "mclk_mhz": {
+                "min": 2795.0,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 43.4,
+                "median": 59.95,
+                "max": 66.2
+              },
+              "tctl_c": {
+                "min": 67.1,
+                "median": 68.5,
+                "max": 70.4
+              },
+              "uclk_mhz": {
+                "min": 1347.5,
+                "median": 1385.5,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [],
+            "births_recorded": [],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": true,
+            "taint": [
+              "host_cpu_max 31.3% > 10%"
+            ]
+          },
+          {
+            "name": "rc-q27-10111940-M-b1-p-r2-long",
+            "start": "2026-10-11T23:57:19.0249666Z",
+            "end": "2026-10-11T23:57:39.1159454Z",
+            "n_samples": 20,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 1996.4,
+                "median": 4801.35,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.13,
+                "median": 1.63,
+                "max": 3.17
+              },
+              "fclk_mhz": {
+                "min": 1447.5,
+                "median": 1497.3,
+                "max": 1559.6
+              },
+              "free_ram_gb": {
+                "min": 17.89,
+                "median": 17.93,
+                "max": 18.21
+              },
+              "gpu_clk_mhz": {
+                "min": 1714.0,
+                "median": 2983.0,
+                "max": 3027.0
+              },
+              "gpu_temp_c": {
+                "min": 54.5,
+                "median": 68.3,
+                "max": 72.1
+              },
+              "host_cpu_pct": {
+                "min": 6.2,
+                "median": 10.79,
+                "max": 32.32
+              },
+              "mclk_mhz": {
+                "min": 2795.0,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 29.2,
+                "median": 60.1,
+                "max": 67.3
+              },
+              "tctl_c": {
+                "min": 67.8,
+                "median": 70.25,
+                "max": 72.0
+              },
+              "uclk_mhz": {
+                "min": 1293.7,
+                "median": 1397.0,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [],
+            "births_recorded": [],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": true,
+            "taint": [
+              "host_cpu_max 32.3% > 10%"
+            ]
+          }
+        ],
+        "clean_rounds": 1,
+        "cpu_bar_pct": 10.0,
+        "ignored_procs": []
+      },
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.06.005.716 I common_speculative_init_result: creating MTP draft context against the target model 'C:\\ArifiLabs\\models\\hf\\huihui-ai\\Huihui-Qwen3.8-27B-abliterated-UD-GGUF\\Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf'\r",
+        "0.08.362.064 I slot print_timing: id  0 | task 0 | draft acceptance = 0.80000 (    4 accepted /     5 generated), mean len =  2.33\r",
+        "0.08.362.064 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 4 accepted)\r",
+        "0.08.362.067 I slot print_timing: id  0 | task 0 | spec round cost  = draft 150067 us/3, verify 723682 us/3, plain 0 us/0, process 4323 us, save 0 us, restore 0 us\r",
+        "0.23.684.838 I slot print_timing: id  0 | task 6 | draft acceptance = 0.86000 (   86 accepted /   100 generated), mean len =  3.21\r",
+        "0.23.684.839 I slot print_timing: id  0 | task 6 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 86 accepted)\r",
+        "0.23.684.841 I slot print_timing: id  0 | task 6 | spec round cost  = draft 2255570 us/41, verify 9450416 us/39, plain 545160 us/2, process 70492 us, save 0 us, restore 0 us\r",
+        "0.43.944.199 I slot print_timing: id  0 | task 50 | draft acceptance = 0.83168 (   84 accepted /   101 generated), mean len =  3.21\r",
+        "0.43.944.200 I slot print_timing: id  0 | task 50 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 84 accepted)\r",
+        "0.43.944.202 I slot print_timing: id  0 | task 50 | spec round cost  = draft 2351100 us/42, verify 9577649 us/38, plain 1183351 us/5, process 67708 us, save 0 us, restore 0 us\r",
+        "0.58.912.572 I slot print_timing: id  0 | task 97 | draft acceptance = 0.87629 (   85 accepted /    97 generated), mean len =  3.12\r",
+        "0.58.912.573 I slot print_timing: id  0 | task 97 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 85 accepted)\r",
+        "0.58.912.575 I slot print_timing: id  0 | task 97 | spec round cost  = draft 2401919 us/42, verify 10192854 us/40, plain 485618 us/2, process 67363 us, save 0 us, restore 0 us\r",
+        "1.19.943.934 I slot print_timing: id  0 | task 142 | draft acceptance = 0.83168 (   84 accepted /   101 generated), mean len =  3.21\r",
+        "1.19.943.935 I slot print_timing: id  0 | task 142 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 84 accepted)\r",
+        "1.19.943.938 I slot print_timing: id  0 | task 142 | spec round cost  = draft 2407851 us/42, verify 9666569 us/38, plain 1168354 us/5, process 64837 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-11T23:57:42.7654845Z"
+    },
+    {
+      "arm": "M-b2-p",
+      "args": [
+        "-m",
+        "C:\\ArifiLabs\\models\\hf\\huihui-ai\\Huihui-Qwen3.8-27B-abliterated-UD-GGUF\\Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf",
+        "-dev",
+        "Vulkan0",
+        "-ngl",
+        "999",
+        "-fa",
+        "on",
+        "-c",
+        "8192",
+        "-b",
+        "1024",
+        "-ub",
+        "512",
+        "-t",
+        "16",
+        "-tb",
+        "32",
+        "-ctk",
+        "q8_0",
+        "-ctv",
+        "q8_0",
+        "--parallel",
+        "1",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "--ctx-checkpoints",
+        "32",
+        "--ctx-checkpoints-device",
+        "off",
+        "--ctx-checkpoints-toolcall",
+        "on",
+        "--spec-type",
+        "draft-mtp",
+        "--spec-draft-n-max",
+        "3",
+        "--spec-draft-p-min",
+        "0.5"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 1275936768.0,
+      "started_utc": "2026-10-11T23:58:15.2047994Z",
+      "healthy": true,
+      "peak_ws_bytes": 1727287296,
+      "peak_private_bytes": 21598666752,
+      "min_avail_bytes": 17783160832,
+      "avail_before_bytes": 19736260608,
+      "requests": [
+        {
+          "tag": "rc-q27-10111940-M-b2-p-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=12.24 ttft_ms=999.6 gen_n=8 decode_tps=7.97 draft=4/5"
+        },
+        {
+          "tag": "rc-q27-10111940-M-b2-p-r1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=15.94 ttft_ms=791.9 gen_n=128 decode_tps=10.0 draft=86/100"
+        },
+        {
+          "tag": "rc-q27-10111940-M-b2-p-r1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=97.89 ttft_ms=6162.2 gen_n=128 decode_tps=9.82 draft=84/101"
+        },
+        {
+          "tag": "rc-q27-10111940-M-b2-p-r2-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=17.99 ttft_ms=811.0 gen_n=128 decode_tps=10.01 draft=85/97"
+        },
+        {
+          "tag": "rc-q27-10111940-M-b2-p-r2-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=104.48 ttft_ms=5802.9 gen_n=128 decode_tps=9.44 draft=84/101"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 11784,
+      "load_s": 6.6,
+      "box": {
+        "rounds": [
+          {
+            "name": "rc-q27-10111940-M-b2-p-r1-short",
+            "start": "2026-10-11T23:58:27.0836615Z",
+            "end": "2026-10-11T23:58:41.1350161Z",
+            "n_samples": 14,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 3104.4,
+                "median": 4816.3,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 1.43,
+                "median": 1.76,
+                "max": 2.01
+              },
+              "fclk_mhz": {
+                "min": 1458.0,
+                "median": 1497.3,
+                "max": 1555.4
+              },
+              "free_ram_gb": {
+                "min": 18.34,
+                "median": 18.35,
+                "max": 18.5
+              },
+              "gpu_clk_mhz": {
+                "min": 1543.0,
+                "median": 2885.0,
+                "max": 3044.0
+              },
+              "gpu_temp_c": {
+                "min": 49.8,
+                "median": 61.2,
+                "max": 65.8
+              },
+              "host_cpu_pct": {
+                "min": 4.17,
+                "median": 8.3,
+                "max": 11.71
+              },
+              "mclk_mhz": {
+                "min": 2795.0,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 32.7,
+                "median": 58.5,
+                "max": 62.3
+              },
+              "tctl_c": {
+                "min": 58.0,
+                "median": 63.6,
+                "max": 67.6
+              },
+              "uclk_mhz": {
+                "min": 1296.4,
+                "median": 1391.8,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [],
+            "births_recorded": [],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": true,
+            "taint": [
+              "host_cpu_max 11.7% > 10%"
+            ]
+          },
+          {
+            "name": "rc-q27-10111940-M-b2-p-r1-long",
+            "start": "2026-10-11T23:58:41.1506983Z",
+            "end": "2026-10-11T23:59:01.2646479Z",
+            "n_samples": 20,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 1996.4,
+                "median": 3768.2,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.2,
+                "median": 1.75,
+                "max": 4.12
+              },
+              "fclk_mhz": {
+                "min": 1458.4,
+                "median": 1497.3,
+                "max": 1512.3
+              },
+              "free_ram_gb": {
+                "min": 17.96,
+                "median": 17.96,
+                "max": 18.36
+              },
+              "gpu_clk_mhz": {
+                "min": 1924.0,
+                "median": 3044.0,
+                "max": 3059.0
+              },
+              "gpu_temp_c": {
+                "min": 57.0,
+                "median": 68.05,
+                "max": 71.0
+              },
+              "host_cpu_pct": {
+                "min": 3.12,
+                "median": 5.36,
+                "max": 9.1
+              },
+              "mclk_mhz": {
+                "min": 2795.0,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 37.3,
+                "median": 60.2,
+                "max": 65.6
+              },
+              "tctl_c": {
+                "min": 64.0,
+                "median": 69.0,
+                "max": 70.9
+              },
+              "uclk_mhz": {
+                "min": 1302.0,
+                "median": 1397.5,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [],
+            "births_recorded": [],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": false,
+            "taint": []
+          },
+          {
+            "name": "rc-q27-10111940-M-b2-p-r2-short",
+            "start": "2026-10-11T23:59:01.2754938Z",
+            "end": "2026-10-11T23:59:15.3220772Z",
+            "n_samples": 14,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 3104.4,
+                "median": 4921.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 1.43,
+                "median": 1.69,
+                "max": 1.9
+              },
+              "fclk_mhz": {
+                "min": 1451.3,
+                "median": 1497.3,
+                "max": 1497.3
+              },
+              "free_ram_gb": {
+                "min": 17.78,
+                "median": 17.8,
+                "max": 17.95
+              },
+              "gpu_clk_mhz": {
+                "min": 1945.0,
+                "median": 3033.0,
+                "max": 3058.0
+              },
+              "gpu_temp_c": {
+                "min": 56.0,
+                "median": 67.45,
+                "max": 69.3
+              },
+              "host_cpu_pct": {
+                "min": 3.27,
+                "median": 6.84,
+                "max": 11.23
+              },
+              "mclk_mhz": {
+                "min": 2795.0,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 32.0,
+                "median": 57.3,
+                "max": 64.7
+              },
+              "tctl_c": {
+                "min": 64.9,
+                "median": 68.0,
+                "max": 70.6
+              },
+              "uclk_mhz": {
+                "min": 1292.9,
+                "median": 1397.5,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [],
+            "births_recorded": [],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": true,
+            "taint": [
+              "host_cpu_max 11.2% > 10%"
+            ]
+          },
+          {
+            "name": "rc-q27-10111940-M-b2-p-r2-long",
+            "start": "2026-10-11T23:59:15.3326784Z",
+            "end": "2026-10-11T23:59:35.4401262Z",
+            "n_samples": 20,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 2939.7,
+                "median": 3713.3,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.06,
+                "median": 1.67,
+                "max": 3.06
+              },
+              "fclk_mhz": {
+                "min": 1406.7,
+                "median": 1497.75,
+                "max": 1548.1
+              },
+              "free_ram_gb": {
+                "min": 17.91,
+                "median": 17.94,
+                "max": 18.25
+              },
+              "gpu_clk_mhz": {
+                "min": 2386.0,
+                "median": 2992.5,
+                "max": 3058.0
+              },
+              "gpu_temp_c": {
+                "min": 63.2,
+                "median": 69.5,
+                "max": 72.9
+              },
+              "host_cpu_pct": {
+                "min": 8.26,
+                "median": 9.89,
+                "max": 13.35
+              },
+              "mclk_mhz": {
+                "min": 2795.0,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 49.4,
+                "median": 61.8,
+                "max": 67.1
+              },
+              "tctl_c": {
+                "min": 69.2,
+                "median": 71.0,
+                "max": 72.9
+              },
+              "uclk_mhz": {
+                "min": 1315.9,
+                "median": 1379.45,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [],
+            "births_recorded": [],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": true,
+            "taint": [
+              "host_cpu_max 13.3% > 10%"
+            ]
+          }
+        ],
+        "clean_rounds": 1,
+        "cpu_bar_pct": 10.0,
+        "ignored_procs": []
+      },
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.05.938.595 I common_speculative_init_result: creating MTP draft context against the target model 'C:\\ArifiLabs\\models\\hf\\huihui-ai\\Huihui-Qwen3.8-27B-abliterated-UD-GGUF\\Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf'\r",
+        "0.08.591.048 I slot print_timing: id  0 | task 0 | draft acceptance = 0.80000 (    4 accepted /     5 generated), mean len =  2.33\r",
+        "0.08.591.049 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 4 accepted)\r",
+        "0.08.591.052 I slot print_timing: id  0 | task 0 | spec round cost  = draft 140577 us/3, verify 730088 us/3, plain 0 us/0, process 4493 us, save 0 us, restore 0 us\r",
+        "0.24.243.912 I slot print_timing: id  0 | task 6 | draft acceptance = 0.86000 (   86 accepted /   100 generated), mean len =  3.21\r",
+        "0.24.243.913 I slot print_timing: id  0 | task 6 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 86 accepted)\r",
+        "0.24.243.915 I slot print_timing: id  0 | task 6 | spec round cost  = draft 2283646 us/41, verify 9718433 us/39, plain 583490 us/2, process 59567 us, save 0 us, restore 0 us\r",
+        "0.43.900.572 I slot print_timing: id  0 | task 50 | draft acceptance = 0.83168 (   84 accepted /   101 generated), mean len =  3.21\r",
+        "0.43.900.573 I slot print_timing: id  0 | task 50 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 84 accepted)\r",
+        "0.43.900.575 I slot print_timing: id  0 | task 50 | spec round cost  = draft 2315127 us/42, verify 9357938 us/38, plain 1120142 us/5, process 65704 us, save 0 us, restore 0 us\r",
+        "0.58.440.735 I slot print_timing: id  0 | task 97 | draft acceptance = 0.87629 (   85 accepted /    97 generated), mean len =  3.12\r",
+        "0.58.440.736 I slot print_timing: id  0 | task 97 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 85 accepted)\r",
+        "0.58.440.738 I slot print_timing: id  0 | task 97 | spec round cost  = draft 2298218 us/42, verify 9833133 us/40, plain 439603 us/2, process 66432 us, save 0 us, restore 0 us\r",
+        "1.18.258.580 I slot print_timing: id  0 | task 142 | draft acceptance = 0.83168 (   84 accepted /   101 generated), mean len =  3.21\r",
+        "1.18.258.581 I slot print_timing: id  0 | task 142 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 84 accepted)\r",
+        "1.18.258.584 I slot print_timing: id  0 | task 142 | spec round cost  = draft 2376119 us/42, verify 9803612 us/38, plain 1158757 us/5, process 64401 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-11T23:59:39.0771856Z"
+    },
+    {
+      "arm": "M-a2-g",
+      "args": [
+        "-m",
+        "C:\\ArifiLabs\\models\\hf\\huihui-ai\\Huihui-Qwen3.8-27B-abliterated-UD-GGUF\\Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf",
+        "-dev",
+        "Vulkan0",
+        "-ngl",
+        "999",
+        "-fa",
+        "on",
+        "-c",
+        "8192",
+        "-b",
+        "1024",
+        "-ub",
+        "512",
+        "-t",
+        "16",
+        "-tb",
+        "32",
+        "-ctk",
+        "q8_0",
+        "-ctv",
+        "q8_0",
+        "--parallel",
+        "1",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "--ctx-checkpoints",
+        "32",
+        "--ctx-checkpoints-device",
+        "off",
+        "--ctx-checkpoints-toolcall",
+        "on",
+        "--spec-type",
+        "draft-mtp",
+        "--spec-draft-n-max",
+        "3",
+        "--spec-draft-p-min",
+        "0.5"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 1329876992.0,
+      "started_utc": "2026-10-12T00:00:11.5313491Z",
+      "healthy": true,
+      "peak_ws_bytes": 1725399040,
+      "peak_private_bytes": 21588774912,
+      "min_avail_bytes": 17760980992,
+      "avail_before_bytes": 19521409024,
+      "requests": [
+        {
+          "tag": "rc-q27-10111940-M-a2-g-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=13.47 ttft_ms=913.9 gen_n=8 decode_tps=7.99 draft=4/5"
+        },
+        {
+          "tag": "rc-q27-10111940-M-a2-g-r1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=15.78 ttft_ms=780.0 gen_n=128 decode_tps=10.07 draft=86/100"
+        },
+        {
+          "tag": "rc-q27-10111940-M-a2-g-r1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=101.11 ttft_ms=5974.1 gen_n=128 decode_tps=9.68 draft=84/101"
+        },
+        {
+          "tag": "rc-q27-10111940-M-a2-g-r2-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=15.81 ttft_ms=940.7 gen_n=128 decode_tps=10.05 draft=85/97"
+        },
+        {
+          "tag": "rc-q27-10111940-M-a2-g-r2-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=105.41 ttft_ms=5776.2 gen_n=128 decode_tps=9.71 draft=84/101"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 10328,
+      "load_s": 7.6,
+      "box": {
+        "rounds": [
+          {
+            "name": "rc-q27-10111940-M-a2-g-r1-short",
+            "start": "2026-10-12T00:00:22.3850267Z",
+            "end": "2026-10-12T00:00:36.4678238Z",
+            "n_samples": 14,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 3294.1,
+                "median": 4382.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 1.3,
+                "median": 1.7,
+                "max": 1.96
+              },
+              "fclk_mhz": {
+                "min": 1449.1,
+                "median": 1497.3,
+                "max": 1587.7
+              },
+              "free_ram_gb": {
+                "min": 18.21,
+                "median": 18.23,
+                "max": 18.32
+              },
+              "gpu_clk_mhz": {
+                "min": 2509.0,
+                "median": 2961.0,
+                "max": 3047.0
+              },
+              "gpu_temp_c": {
+                "min": 46.4,
+                "median": 61.8,
+                "max": 65.4
+              },
+              "host_cpu_pct": {
+                "min": 4.9,
+                "median": 7.38,
+                "max": 13.33
+              },
+              "mclk_mhz": {
+                "min": 2395.7,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 48.7,
+                "median": 55.8,
+                "max": 60.4
+              },
+              "tctl_c": {
+                "min": 59.9,
+                "median": 64.0,
+                "max": 66.2
+              },
+              "uclk_mhz": {
+                "min": 1348.9,
+                "median": 1395.5,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [],
+            "births_recorded": [],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": true,
+            "taint": [
+              "host_cpu_max 13.3% > 10%"
+            ]
+          },
+          {
+            "name": "rc-q27-10111940-M-a2-g-r1-long",
+            "start": "2026-10-12T00:00:36.4815685Z",
+            "end": "2026-10-12T00:00:56.5811064Z",
+            "n_samples": 20,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 3294.1,
+                "median": 4921.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.0,
+                "median": 1.62,
+                "max": 4.08
+              },
+              "fclk_mhz": {
+                "min": 1497.3,
+                "median": 1497.35,
+                "max": 1550.4
+              },
+              "free_ram_gb": {
+                "min": 17.89,
+                "median": 17.91,
+                "max": 18.25
+              },
+              "gpu_clk_mhz": {
+                "min": 2271.0,
+                "median": 3010.0,
+                "max": 3048.0
+              },
+              "gpu_temp_c": {
+                "min": 61.8,
+                "median": 67.7,
+                "max": 70.6
+              },
+              "host_cpu_pct": {
+                "min": 5.07,
+                "median": 8.8,
+                "max": 12.89
+              },
+              "mclk_mhz": {
+                "min": 2395.7,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 48.5,
+                "median": 60.7,
+                "max": 66.3
+              },
+              "tctl_c": {
+                "min": 64.5,
+                "median": 69.2,
+                "max": 70.2
+              },
+              "uclk_mhz": {
+                "min": 1355.2,
+                "median": 1397.5,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [
+              "compattelrunner.exe"
+            ],
+            "births_recorded": [
+              "compattelrunner.exe"
+            ],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": true,
+            "taint": [
+              "host_cpu_max 12.9% > 10%"
+            ]
+          },
+          {
+            "name": "rc-q27-10111940-M-a2-g-r2-short",
+            "start": "2026-10-12T00:00:56.5939766Z",
+            "end": "2026-10-12T00:01:10.6502172Z",
+            "n_samples": 14,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 3294.1,
+                "median": 4921.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 1.35,
+                "median": 1.53,
+                "max": 1.85
+              },
+              "fclk_mhz": {
+                "min": 1451.3,
+                "median": 1497.3,
+                "max": 1524.4
+              },
+              "free_ram_gb": {
+                "min": 17.75,
+                "median": 17.77,
+                "max": 17.79
+              },
+              "gpu_clk_mhz": {
+                "min": 1946.0,
+                "median": 3011.0,
+                "max": 3044.0
+              },
+              "gpu_temp_c": {
+                "min": 59.6,
+                "median": 67.7,
+                "max": 68.4
+              },
+              "host_cpu_pct": {
+                "min": 5.01,
+                "median": 7.15,
+                "max": 9.75
+              },
+              "mclk_mhz": {
+                "min": 2395.7,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 36.4,
+                "median": 59.0,
+                "max": 59.8
+              },
+              "tctl_c": {
+                "min": 65.8,
+                "median": 68.9,
+                "max": 69.9
+              },
+              "uclk_mhz": {
+                "min": 1330.8,
+                "median": 1397.5,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [],
+            "births_recorded": [],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": false,
+            "taint": []
+          },
+          {
+            "name": "rc-q27-10111940-M-a2-g-r2-long",
+            "start": "2026-10-12T00:01:10.6641171Z",
+            "end": "2026-10-12T00:01:30.7734025Z",
+            "n_samples": 20,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 2236.0,
+                "median": 3910.45,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.0,
+                "median": 1.6,
+                "max": 2.9
+              },
+              "fclk_mhz": {
+                "min": 1447.9,
+                "median": 1497.3,
+                "max": 1519.1
+              },
+              "free_ram_gb": {
+                "min": 17.88,
+                "median": 17.91,
+                "max": 18.24
+              },
+              "gpu_clk_mhz": {
+                "min": 2822.0,
+                "median": 3001.0,
+                "max": 3037.0
+              },
+              "gpu_temp_c": {
+                "min": 66.3,
+                "median": 69.5,
+                "max": 73.6
+              },
+              "host_cpu_pct": {
+                "min": 4.65,
+                "median": 6.74,
+                "max": 11.57
+              },
+              "mclk_mhz": {
+                "min": 2395.7,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 54.6,
+                "median": 60.4,
+                "max": 66.2
+              },
+              "tctl_c": {
+                "min": 69.0,
+                "median": 71.25,
+                "max": 73.1
+              },
+              "uclk_mhz": {
+                "min": 1353.1,
+                "median": 1396.85,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [
+              "svchost.exe"
+            ],
+            "births_recorded": [
+              "svchost.exe"
+            ],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": true,
+            "taint": [
+              "host_cpu_max 11.6% > 10%"
+            ]
+          }
+        ],
+        "clean_rounds": 1,
+        "cpu_bar_pct": 10.0,
+        "ignored_procs": []
+      },
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.06.403.545 I common_speculative_init_result: creating MTP draft context against the target model 'C:\\ArifiLabs\\models\\hf\\huihui-ai\\Huihui-Qwen3.8-27B-abliterated-UD-GGUF\\Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf'\r",
+        "0.09.403.998 I slot print_timing: id  0 | task 0 | draft acceptance = 0.80000 (    4 accepted /     5 generated), mean len =  2.33\r",
+        "0.09.403.999 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 4 accepted)\r",
+        "0.09.404.001 I slot print_timing: id  0 | task 0 | spec round cost  = draft 141922 us/3, verify 724301 us/3, plain 0 us/0, process 5011 us, save 0 us, restore 0 us\r",
+        "0.23.012.967 I slot print_timing: id  0 | task 6 | draft acceptance = 0.86000 (   86 accepted /   100 generated), mean len =  3.21\r",
+        "0.23.012.969 I slot print_timing: id  0 | task 6 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 86 accepted)\r",
+        "0.23.012.971 I slot print_timing: id  0 | task 6 | spec round cost  = draft 2303438 us/41, verify 9647579 us/39, plain 532746 us/2, process 72970 us, save 0 us, restore 0 us\r",
+        "0.42.823.719 I slot print_timing: id  0 | task 50 | draft acceptance = 0.83168 (   84 accepted /   101 generated), mean len =  3.21\r",
+        "0.42.823.720 I slot print_timing: id  0 | task 50 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 84 accepted)\r",
+        "0.42.823.722 I slot print_timing: id  0 | task 50 | spec round cost  = draft 2375267 us/42, verify 9452483 us/38, plain 1147737 us/5, process 72402 us, save 0 us, restore 0 us\r",
+        "0.57.423.796 I slot print_timing: id  0 | task 97 | draft acceptance = 0.87629 (   85 accepted /    97 generated), mean len =  3.12\r",
+        "0.57.423.797 I slot print_timing: id  0 | task 97 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 85 accepted)\r",
+        "0.57.423.800 I slot print_timing: id  0 | task 97 | spec round cost  = draft 2296183 us/42, verify 9780300 us/40, plain 444121 us/2, process 67287 us, save 0 us, restore 0 us\r",
+        "1.16.775.676 I slot print_timing: id  0 | task 142 | draft acceptance = 0.83168 (   84 accepted /   101 generated), mean len =  3.21\r",
+        "1.16.775.677 I slot print_timing: id  0 | task 142 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 84 accepted)\r",
+        "1.16.775.678 I slot print_timing: id  0 | task 142 | spec round cost  = draft 2361776 us/42, verify 9475421 us/38, plain 1123740 us/5, process 70578 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-12T00:01:34.4070262Z"
+    },
+    {
+      "arm": "D-a1-g",
+      "args": [
+        "-m",
+        "C:\\ArifiLabs\\models\\hf\\huihui-ai\\Huihui-Qwen3.8-27B-abliterated-UD-GGUF\\Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf",
+        "-dev",
+        "Vulkan0",
+        "-ngl",
+        "999",
+        "-fa",
+        "on",
+        "-c",
+        "8192",
+        "-b",
+        "1024",
+        "-ub",
+        "512",
+        "-t",
+        "16",
+        "-tb",
+        "32",
+        "-ctk",
+        "q8_0",
+        "-ctv",
+        "q8_0",
+        "--parallel",
+        "1",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "--ctx-checkpoints",
+        "32",
+        "--ctx-checkpoints-device",
+        "off",
+        "--ctx-checkpoints-toolcall",
+        "on",
+        "--spec-type",
+        "draft-dflash",
+        "-md",
+        "C:\\ArifiLabs\\models\\hf\\incoai\\Qwen3.8-27B-DFlash2-GGUF-r0829\\Qwen3.8-27B-DFlash2-Q4_K_M.gguf",
+        "--dflash-defer-injection",
+        "0",
+        "--spec-draft-n-max",
+        "6"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 1290469376.0,
+      "started_utc": "2026-10-12T00:02:06.8638745Z",
+      "healthy": true,
+      "peak_ws_bytes": 2500026368,
+      "peak_private_bytes": 23587352576,
+      "min_avail_bytes": 16970719232,
+      "avail_before_bytes": 19588755456,
+      "requests": [
+        {
+          "tag": "rc-q27-10111940-D-a1-g-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=11.37 ttft_ms=1129.6 gen_n=8 decode_tps=7.96 draft=5/7"
+        },
+        {
+          "tag": "rc-q27-10111940-D-a1-g-r1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=16.62 ttft_ms=742.1 gen_n=128 decode_tps=13.7 draft=101/152"
+        },
+        {
+          "tag": "rc-q27-10111940-D-a1-g-r1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=96.56 ttft_ms=6251.4 gen_n=128 decode_tps=11.2 draft=96/175"
+        },
+        {
+          "tag": "rc-q27-10111940-D-a1-g-r2-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=14.61 ttft_ms=945.3 gen_n=128 decode_tps=13.68 draft=101/152"
+        },
+        {
+          "tag": "rc-q27-10111940-D-a1-g-r2-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=104.36 ttft_ms=5869.2 gen_n=128 decode_tps=11.31 draft=96/175"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 1436,
+      "load_s": 7.6,
+      "box": {
+        "rounds": [
+          {
+            "name": "rc-q27-10111940-D-a1-g-r1-short",
+            "start": "2026-10-12T00:02:19.7259841Z",
+            "end": "2026-10-12T00:02:31.7994843Z",
+            "n_samples": 12,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 3294.1,
+                "median": 3294.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.0,
+                "median": 1.37,
+                "max": 1.78
+              },
+              "fclk_mhz": {
+                "min": 1403.0,
+                "median": 1497.3,
+                "max": 1500.4
+              },
+              "free_ram_gb": {
+                "min": 18.03,
+                "median": 18.13,
+                "max": 18.18
+              },
+              "gpu_clk_mhz": {
+                "min": 1480.0,
+                "median": 2885.0,
+                "max": 3057.0
+              },
+              "gpu_temp_c": {
+                "min": 48.0,
+                "median": 61.7,
+                "max": 64.0
+              },
+              "host_cpu_pct": {
+                "min": 4.86,
+                "median": 6.35,
+                "max": 8.81
+              },
+              "mclk_mhz": {
+                "min": 2395.7,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 30.8,
+                "median": 54.3,
+                "max": 59.8
+              },
+              "tctl_c": {
+                "min": 57.1,
+                "median": 62.65,
+                "max": 64.0
+              },
+              "uclk_mhz": {
+                "min": 1264.2,
+                "median": 1333.5,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [],
+            "births_recorded": [],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": false,
+            "taint": []
+          },
+          {
+            "name": "rc-q27-10111940-D-a1-g-r1-long",
+            "start": "2026-10-12T00:02:31.8152219Z",
+            "end": "2026-10-12T00:02:49.9166059Z",
+            "n_samples": 18,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 2790.0,
+                "median": 3294.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.07,
+                "median": 1.3,
+                "max": 4.17
+              },
+              "fclk_mhz": {
+                "min": 1400.7,
+                "median": 1497.3,
+                "max": 1536.4
+              },
+              "free_ram_gb": {
+                "min": 17.04,
+                "median": 17.13,
+                "max": 18.13
+              },
+              "gpu_clk_mhz": {
+                "min": 1645.0,
+                "median": 2876.0,
+                "max": 3056.0
+              },
+              "gpu_temp_c": {
+                "min": 50.9,
+                "median": 65.2,
+                "max": 69.6
+              },
+              "host_cpu_pct": {
+                "min": 4.5,
+                "median": 6.16,
+                "max": 10.63
+              },
+              "mclk_mhz": {
+                "min": 2395.7,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 27.7,
+                "median": 56.2,
+                "max": 66.0
+              },
+              "tctl_c": {
+                "min": 60.2,
+                "median": 66.5,
+                "max": 69.4
+              },
+              "uclk_mhz": {
+                "min": 1264.2,
+                "median": 1353.0,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [],
+            "births_recorded": [],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": true,
+            "taint": [
+              "host_cpu_max 10.6% > 10%"
+            ]
+          },
+          {
+            "name": "rc-q27-10111940-D-a1-g-r2-short",
+            "start": "2026-10-12T00:02:49.9319728Z",
+            "end": "2026-10-12T00:03:02.0013843Z",
+            "n_samples": 12,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 2705.1,
+                "median": 3294.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.33,
+                "median": 1.24,
+                "max": 1.69
+              },
+              "fclk_mhz": {
+                "min": 1401.4,
+                "median": 1448.7,
+                "max": 1526.5
+              },
+              "free_ram_gb": {
+                "min": 16.97,
+                "median": 16.98,
+                "max": 17.14
+              },
+              "gpu_clk_mhz": {
+                "min": 1997.0,
+                "median": 2940.0,
+                "max": 3026.0
+              },
+              "gpu_temp_c": {
+                "min": 55.8,
+                "median": 67.0,
+                "max": 67.8
+              },
+              "host_cpu_pct": {
+                "min": 4.49,
+                "median": 5.61,
+                "max": 12.12
+              },
+              "mclk_mhz": {
+                "min": 2395.7,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 34.1,
+                "median": 55.75,
+                "max": 59.9
+              },
+              "tctl_c": {
+                "min": 63.8,
+                "median": 67.5,
+                "max": 67.9
+              },
+              "uclk_mhz": {
+                "min": 1294.4,
+                "median": 1332.0,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [],
+            "births_recorded": [],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": true,
+            "taint": [
+              "host_cpu_max 12.1% > 10%"
+            ]
+          },
+          {
+            "name": "rc-q27-10111940-D-a1-g-r2-long",
+            "start": "2026-10-12T00:03:02.0154405Z",
+            "end": "2026-10-12T00:03:20.1117061Z",
+            "n_samples": 18,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 598.9,
+                "median": 3294.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.07,
+                "median": 1.23,
+                "max": 2.67
+              },
+              "fclk_mhz": {
+                "min": 1356.2,
+                "median": 1493.1,
+                "max": 1508.1
+              },
+              "free_ram_gb": {
+                "min": 16.97,
+                "median": 17.14,
+                "max": 17.45
+              },
+              "gpu_clk_mhz": {
+                "min": 1807.0,
+                "median": 2885.5,
+                "max": 3070.0
+              },
+              "gpu_temp_c": {
+                "min": 54.3,
+                "median": 67.55,
+                "max": 72.8
+              },
+              "host_cpu_pct": {
+                "min": 4.68,
+                "median": 5.33,
+                "max": 10.38
+              },
+              "mclk_mhz": {
+                "min": 2395.7,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 26.5,
+                "median": 54.7,
+                "max": 66.0
+              },
+              "tctl_c": {
+                "min": 64.5,
+                "median": 68.4,
+                "max": 72.6
+              },
+              "uclk_mhz": {
+                "min": 1270.5,
+                "median": 1322.1,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [],
+            "births_recorded": [],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": true,
+            "taint": [
+              "host_cpu_max 10.4% > 10%"
+            ]
+          }
+        ],
+        "clean_rounds": 1,
+        "cpu_bar_pct": 10.0,
+        "ignored_procs": []
+      },
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.00.248.990 I srv  server_prefl: preselected DFlash2 shared driver (block_size=8, draft-max=6)\r",
+        "0.00.254.462 I srv  server_prepa: [spec] auto-selected Vulkan0 as the primary draft device\r",
+        "0.02.146.187 E llama_init_from_model: failed to initialize the context: dflash requires ctx_other to be set (this warning is normal during memory fitting)\r",
+        "0.02.203.486 W operator(): failed to measure the memory of the extra model, fitting without it: failed to create llama_context from model\r",
+        "0.06.084.838 I common_speculative_init_result: loading draft model 'C:\\ArifiLabs\\models\\hf\\incoai\\Qwen3.8-27B-DFlash2-GGUF-r0829\\Qwen3.8-27B-DFlash2-Q4_K_M.gguf'\r",
+        "0.06.953.417 I common_speculative_impl_draft_dflash: adding speculative implementation 'draft-dflash'\r",
+        "0.06.953.764 I common_speculative_impl_draft_dflash: - n_max=6, n_min=0, p_min=0.00\r",
+        "0.06.953.767 I common_speculative_impl_draft_dflash: - block_size=13, mask_token_id=248070, n_extract=5, sample_from_anchor=true\r",
+        "0.06.953.770 I common_speculative_impl_draft_dflash: DFlash2 depth mode: requested depth\r",
+        "0.06.953.773 I common_speculative_impl_draft_dflash: DFlash KV injection: legacy (encode + decode, default)\r",
+        "0.06.953.845 I common_speculative_impl_draft_dflash: DFlash2 draft attention: non-causal\r",
+        "0.09.794.672 I slot print_timing: id  0 | task 0 | draft acceptance = 0.71429 (    5 accepted /     7 generated), mean len =  3.50\r",
+        "0.09.794.673 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 5 accepted)\r",
+        "0.09.794.675 I slot print_timing: id  0 | task 0 | spec round cost  = draft 130234 us/2, verify 660903 us/2, plain 0 us/0, process 43801 us, save 0 us, restore 0 us\r",
+        "0.21.727.350 I slot print_timing: id  0 | task 5 | draft acceptance = 0.66447 (  101 accepted /   152 generated), mean len =  4.88\r",
+        "0.21.727.351 I slot print_timing: id  0 | task 5 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 101 accepted)\r",
+        "0.21.727.353 I slot print_timing: id  0 | task 5 | spec round cost  = draft 1000854 us/26, verify 8079315 us/26, plain 0 us/0, process 144342 us, save 0 us, restore 0 us\r",
+        "0.41.400.337 I slot print_timing: id  0 | task 34 | draft acceptance = 0.54857 (   96 accepted /   175 generated), mean len =  4.20\r",
+        "0.41.400.338 I slot print_timing: id  0 | task 34 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 96 accepted)\r",
+        "0.41.400.340 I slot print_timing: id  0 | task 34 | spec round cost  = draft 1145197 us/30, verify 9480620 us/30, plain 536075 us/1, process 139396 us, save 0 us, restore 0 us\r",
+        "0.52.146.317 I slot print_timing: id  0 | task 69 | draft acceptance = 0.66447 (  101 accepted /   152 generated), mean len =  4.88\r",
+        "0.52.146.318 I slot print_timing: id  0 | task 69 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 101 accepted)\r",
+        "0.52.146.319 I slot print_timing: id  0 | task 69 | spec round cost  = draft 973973 us/26, verify 8152791 us/26, plain 0 us/0, process 119563 us, save 0 us, restore 0 us\r",
+        "1.11.109.397 I slot print_timing: id  0 | task 98 | draft acceptance = 0.54857 (   96 accepted /   175 generated), mean len =  4.20\r",
+        "1.11.109.398 I slot print_timing: id  0 | task 98 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 96 accepted)\r",
+        "1.11.109.400 I slot print_timing: id  0 | task 98 | spec round cost  = draft 1142657 us/30, verify 9675666 us/30, plain 228969 us/1, process 138062 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-12T00:03:23.8630099Z"
+    },
+    {
+      "arm": "D-b1-p",
+      "args": [
+        "-m",
+        "C:\\ArifiLabs\\models\\hf\\huihui-ai\\Huihui-Qwen3.8-27B-abliterated-UD-GGUF\\Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf",
+        "-dev",
+        "Vulkan0",
+        "-ngl",
+        "999",
+        "-fa",
+        "on",
+        "-c",
+        "8192",
+        "-b",
+        "1024",
+        "-ub",
+        "512",
+        "-t",
+        "16",
+        "-tb",
+        "32",
+        "-ctk",
+        "q8_0",
+        "-ctv",
+        "q8_0",
+        "--parallel",
+        "1",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "--ctx-checkpoints",
+        "32",
+        "--ctx-checkpoints-device",
+        "off",
+        "--ctx-checkpoints-toolcall",
+        "on",
+        "--spec-type",
+        "draft-dflash",
+        "-md",
+        "C:\\ArifiLabs\\models\\hf\\incoai\\Qwen3.8-27B-DFlash2-GGUF-r0829\\Qwen3.8-27B-DFlash2-Q4_K_M.gguf",
+        "--dflash-defer-injection",
+        "0",
+        "--spec-draft-n-max",
+        "6"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 1280741376.0,
+      "started_utc": "2026-10-12T00:03:56.3369105Z",
+      "healthy": true,
+      "peak_ws_bytes": 2499698688,
+      "peak_private_bytes": 23624572928,
+      "min_avail_bytes": 16945987584,
+      "avail_before_bytes": 19640004608,
+      "requests": [
+        {
+          "tag": "rc-q27-10111940-D-b1-p-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=11.79 ttft_ms=1059.2 gen_n=8 decode_tps=8.45 draft=5/7"
+        },
+        {
+          "tag": "rc-q27-10111940-D-b1-p-r1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=15.2 ttft_ms=825.8 gen_n=128 decode_tps=13.74 draft=101/152"
+        },
+        {
+          "tag": "rc-q27-10111940-D-b1-p-r1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=96.16 ttft_ms=6274.8 gen_n=128 decode_tps=11.52 draft=96/175"
+        },
+        {
+          "tag": "rc-q27-10111940-D-b1-p-r2-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=16.4 ttft_ms=873.6 gen_n=128 decode_tps=13.36 draft=101/152"
+        },
+        {
+          "tag": "rc-q27-10111940-D-b1-p-r2-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=102.21 ttft_ms=5997.0 gen_n=128 decode_tps=11.6 draft=96/175"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 16464,
+      "load_s": 11.6,
+      "box": {
+        "rounds": [
+          {
+            "name": "rc-q27-10111940-D-b1-p-r1-short",
+            "start": "2026-10-12T00:04:13.2749159Z",
+            "end": "2026-10-12T00:04:25.3362405Z",
+            "n_samples": 12,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 2460.6,
+                "median": 3830.6,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.0,
+                "median": 1.36,
+                "max": 1.89
+              },
+              "fclk_mhz": {
+                "min": 1404.2,
+                "median": 1455.9,
+                "max": 1518.5
+              },
+              "free_ram_gb": {
+                "min": 18.03,
+                "median": 18.14,
+                "max": 18.18
+              },
+              "gpu_clk_mhz": {
+                "min": 956.0,
+                "median": 2898.5,
+                "max": 3059.0
+              },
+              "gpu_temp_c": {
+                "min": 44.8,
+                "median": 59.7,
+                "max": 63.6
+              },
+              "host_cpu_pct": {
+                "min": 5.08,
+                "median": 6.2,
+                "max": 8.98
+              },
+              "mclk_mhz": {
+                "min": 2395.7,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 13.4,
+                "median": 55.2,
+                "max": 59.0
+              },
+              "tctl_c": {
+                "min": 55.2,
+                "median": 63.0,
+                "max": 64.9
+              },
+              "uclk_mhz": {
+                "min": 1219.2,
+                "median": 1334.65,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [],
+            "births_recorded": [],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": false,
+            "taint": []
+          },
+          {
+            "name": "rc-q27-10111940-D-b1-p-r1-long",
+            "start": "2026-10-12T00:04:25.3506582Z",
+            "end": "2026-10-12T00:04:43.4315203Z",
+            "n_samples": 18,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 3014.6,
+                "median": 3294.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.07,
+                "median": 1.46,
+                "max": 4.26
+              },
+              "fclk_mhz": {
+                "min": 1404.3,
+                "median": 1497.3,
+                "max": 1616.0
+              },
+              "free_ram_gb": {
+                "min": 17.04,
+                "median": 17.14,
+                "max": 18.13
+              },
+              "gpu_clk_mhz": {
+                "min": 1146.0,
+                "median": 2833.0,
+                "max": 3049.0
+              },
+              "gpu_temp_c": {
+                "min": 48.6,
+                "median": 65.1,
+                "max": 69.4
+              },
+              "host_cpu_pct": {
+                "min": 5.08,
+                "median": 5.87,
+                "max": 10.92
+              },
+              "mclk_mhz": {
+                "min": 2395.7,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 16.0,
+                "median": 57.9,
+                "max": 66.1
+              },
+              "tctl_c": {
+                "min": 58.2,
+                "median": 66.6,
+                "max": 68.6
+              },
+              "uclk_mhz": {
+                "min": 1239.6,
+                "median": 1357.8,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [],
+            "births_recorded": [],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": true,
+            "taint": [
+              "host_cpu_max 10.9% > 10%"
+            ]
+          },
+          {
+            "name": "rc-q27-10111940-D-b1-p-r2-short",
+            "start": "2026-10-12T00:04:43.4466075Z",
+            "end": "2026-10-12T00:04:55.5555605Z",
+            "n_samples": 12,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 2236.0,
+                "median": 2987.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.65,
+                "median": 1.31,
+                "max": 1.71
+              },
+              "fclk_mhz": {
+                "min": 1405.6,
+                "median": 1473.05,
+                "max": 1515.0
+              },
+              "free_ram_gb": {
+                "min": 16.95,
+                "median": 16.95,
+                "max": 17.13
+              },
+              "gpu_clk_mhz": {
+                "min": 2420.0,
+                "median": 2890.0,
+                "max": 3024.0
+              },
+              "gpu_temp_c": {
+                "min": 60.9,
+                "median": 66.4,
+                "max": 67.2
+              },
+              "host_cpu_pct": {
+                "min": 5.93,
+                "median": 9.36,
+                "max": 11.49
+              },
+              "mclk_mhz": {
+                "min": 2395.7,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 42.1,
+                "median": 55.45,
+                "max": 61.2
+              },
+              "tctl_c": {
+                "min": 64.1,
+                "median": 66.8,
+                "max": 67.2
+              },
+              "uclk_mhz": {
+                "min": 1315.0,
+                "median": 1342.65,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [
+              "compattelrunner.exe"
+            ],
+            "births_recorded": [
+              "compattelrunner.exe"
+            ],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": true,
+            "taint": [
+              "host_cpu_max 11.5% > 10%"
+            ]
+          },
+          {
+            "name": "rc-q27-10111940-D-b1-p-r2-long",
+            "start": "2026-10-12T00:04:55.5703475Z",
+            "end": "2026-10-12T00:05:13.7448389Z",
+            "n_samples": 18,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 2610.3,
+                "median": 4921.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.0,
+                "median": 1.23,
+                "max": 3.35
+              },
+              "fclk_mhz": {
+                "min": 1375.2,
+                "median": 1471.7,
+                "max": 1531.8
+              },
+              "free_ram_gb": {
+                "min": 16.93,
+                "median": 17.14,
+                "max": 17.42
+              },
+              "gpu_clk_mhz": {
+                "min": 1378.0,
+                "median": 3008.0,
+                "max": 3033.0
+              },
+              "gpu_temp_c": {
+                "min": 54.6,
+                "median": 68.4,
+                "max": 72.2
+              },
+              "host_cpu_pct": {
+                "min": 4.59,
+                "median": 6.0,
+                "max": 11.05
+              },
+              "mclk_mhz": {
+                "min": 2395.7,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 23.6,
+                "median": 57.2,
+                "max": 66.6
+              },
+              "tctl_c": {
+                "min": 62.9,
+                "median": 68.9,
+                "max": 71.9
+              },
+              "uclk_mhz": {
+                "min": 1253.2,
+                "median": 1354.1,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [],
+            "births_recorded": [],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": true,
+            "taint": [
+              "host_cpu_max 11.1% > 10%"
+            ]
+          }
+        ],
+        "clean_rounds": 1,
+        "cpu_bar_pct": 10.0,
+        "ignored_procs": []
+      },
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.00.332.143 I srv  server_prefl: preselected DFlash2 shared driver (block_size=8, draft-max=6)\r",
+        "0.00.337.695 I srv  server_prepa: [spec] auto-selected Vulkan0 as the primary draft device\r",
+        "0.02.192.181 E llama_init_from_model: failed to initialize the context: dflash requires ctx_other to be set (this warning is normal during memory fitting)\r",
+        "0.02.249.188 W operator(): failed to measure the memory of the extra model, fitting without it: failed to create llama_context from model\r",
+        "0.10.189.577 I common_speculative_init_result: loading draft model 'C:\\ArifiLabs\\models\\hf\\incoai\\Qwen3.8-27B-DFlash2-GGUF-r0829\\Qwen3.8-27B-DFlash2-Q4_K_M.gguf'\r",
+        "0.11.072.933 I common_speculative_impl_draft_dflash: adding speculative implementation 'draft-dflash'\r",
+        "0.11.072.944 I common_speculative_impl_draft_dflash: - n_max=6, n_min=0, p_min=0.00\r",
+        "0.11.072.945 I common_speculative_impl_draft_dflash: - block_size=13, mask_token_id=248070, n_extract=5, sample_from_anchor=true\r",
+        "0.11.073.673 I common_speculative_impl_draft_dflash: DFlash2 depth mode: requested depth\r",
+        "0.11.073.677 I common_speculative_impl_draft_dflash: DFlash KV injection: legacy (encode + decode, default)\r",
+        "0.11.073.766 I common_speculative_impl_draft_dflash: DFlash2 draft attention: non-causal\r",
+        "0.13.451.834 I slot print_timing: id  0 | task 0 | draft acceptance = 0.71429 (    5 accepted /     7 generated), mean len =  3.50\r",
+        "0.13.451.835 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 5 accepted)\r",
+        "0.13.451.837 I slot print_timing: id  0 | task 0 | spec round cost  = draft 133663 us/2, verify 683700 us/2, plain 0 us/0, process 7450 us, save 0 us, restore 0 us\r",
+        "0.25.664.353 I slot print_timing: id  0 | task 5 | draft acceptance = 0.66447 (  101 accepted /   152 generated), mean len =  4.88\r",
+        "0.25.664.354 I slot print_timing: id  0 | task 5 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 101 accepted)\r",
+        "0.25.664.356 I slot print_timing: id  0 | task 5 | spec round cost  = draft 1003168 us/26, verify 8086322 us/26, plain 0 us/0, process 114655 us, save 0 us, restore 0 us\r",
+        "0.44.971.098 I slot print_timing: id  0 | task 34 | draft acceptance = 0.54857 (   96 accepted /   175 generated), mean len =  4.20\r",
+        "0.44.971.099 I slot print_timing: id  0 | task 34 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 96 accepted)\r",
+        "0.44.971.101 I slot print_timing: id  0 | task 34 | spec round cost  = draft 1224097 us/30, verify 9283011 us/30, plain 332665 us/1, process 140414 us, save 0 us, restore 0 us\r",
+        "0.56.148.137 I slot print_timing: id  0 | task 69 | draft acceptance = 0.66447 (  101 accepted /   152 generated), mean len =  4.88\r",
+        "0.56.148.138 I slot print_timing: id  0 | task 69 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 101 accepted)\r",
+        "0.56.148.141 I slot print_timing: id  0 | task 69 | spec round cost  = draft 995569 us/26, verify 8355699 us/26, plain 0 us/0, process 117367 us, save 0 us, restore 0 us\r",
+        "1.14.833.005 I slot print_timing: id  0 | task 98 | draft acceptance = 0.54857 (   96 accepted /   175 generated), mean len =  4.20\r",
+        "1.14.833.006 I slot print_timing: id  0 | task 98 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 96 accepted)\r",
+        "1.14.833.008 I slot print_timing: id  0 | task 98 | spec round cost  = draft 1155142 us/30, verify 9388647 us/30, plain 229188 us/1, process 136673 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-12T00:05:17.3328197Z"
+    },
+    {
+      "arm": "D-b2-p",
+      "args": [
+        "-m",
+        "C:\\ArifiLabs\\models\\hf\\huihui-ai\\Huihui-Qwen3.8-27B-abliterated-UD-GGUF\\Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf",
+        "-dev",
+        "Vulkan0",
+        "-ngl",
+        "999",
+        "-fa",
+        "on",
+        "-c",
+        "8192",
+        "-b",
+        "1024",
+        "-ub",
+        "512",
+        "-t",
+        "16",
+        "-tb",
+        "32",
+        "-ctk",
+        "q8_0",
+        "-ctv",
+        "q8_0",
+        "--parallel",
+        "1",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "--ctx-checkpoints",
+        "32",
+        "--ctx-checkpoints-device",
+        "off",
+        "--ctx-checkpoints-toolcall",
+        "on",
+        "--spec-type",
+        "draft-dflash",
+        "-md",
+        "C:\\ArifiLabs\\models\\hf\\incoai\\Qwen3.8-27B-DFlash2-GGUF-r0829\\Qwen3.8-27B-DFlash2-Q4_K_M.gguf",
+        "--dflash-defer-injection",
+        "0",
+        "--spec-draft-n-max",
+        "6"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 1281462272.0,
+      "started_utc": "2026-10-12T00:05:49.8045676Z",
+      "healthy": true,
+      "peak_ws_bytes": 2500616192,
+      "peak_private_bytes": 23571980288,
+      "min_avail_bytes": 16971427840,
+      "avail_before_bytes": 19638366208,
+      "requests": [
+        {
+          "tag": "rc-q27-10111940-D-b2-p-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=12.72 ttft_ms=989.2 gen_n=8 decode_tps=8.69 draft=5/7"
+        },
+        {
+          "tag": "rc-q27-10111940-D-b2-p-r1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=16.86 ttft_ms=747.7 gen_n=128 decode_tps=14.27 draft=101/152"
+        },
+        {
+          "tag": "rc-q27-10111940-D-b2-p-r1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=97.96 ttft_ms=6159.2 gen_n=128 decode_tps=11.58 draft=96/175"
+        },
+        {
+          "tag": "rc-q27-10111940-D-b2-p-r2-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=16.46 ttft_ms=916.6 gen_n=128 decode_tps=13.52 draft=101/152"
+        },
+        {
+          "tag": "rc-q27-10111940-D-b2-p-r2-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=106.24 ttft_ms=5775.4 gen_n=128 decode_tps=11.74 draft=96/175"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 4400,
+      "load_s": 11.6,
+      "box": {
+        "rounds": [
+          {
+            "name": "rc-q27-10111940-D-b2-p-r1-short",
+            "start": "2026-10-12T00:06:04.7000781Z",
+            "end": "2026-10-12T00:06:14.7596779Z",
+            "n_samples": 10,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 1996.4,
+                "median": 3104.4,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 1.23,
+                "median": 1.31,
+                "max": 2.01
+              },
+              "fclk_mhz": {
+                "min": 1263.3,
+                "median": 1477.75,
+                "max": 1529.1
+              },
+              "free_ram_gb": {
+                "min": 18.03,
+                "median": 18.13,
+                "max": 18.18
+              },
+              "gpu_clk_mhz": {
+                "min": 1541.0,
+                "median": 2961.0,
+                "max": 3076.0
+              },
+              "gpu_temp_c": {
+                "min": 46.5,
+                "median": 58.85,
+                "max": 63.1
+              },
+              "host_cpu_pct": {
+                "min": 0.65,
+                "median": 1.26,
+                "max": 1.95
+              },
+              "mclk_mhz": {
+                "min": 2395.7,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 19.6,
+                "median": 51.95,
+                "max": 54.5
+              },
+              "tctl_c": {
+                "min": 55.4,
+                "median": 62.35,
+                "max": 64.2
+              },
+              "uclk_mhz": {
+                "min": 1084.1,
+                "median": 1360.4,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [],
+            "births_recorded": [],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": false,
+            "taint": []
+          },
+          {
+            "name": "rc-q27-10111940-D-b2-p-r1-long",
+            "start": "2026-10-12T00:06:14.775559Z",
+            "end": "2026-10-12T00:06:32.9230993Z",
+            "n_samples": 18,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 1996.4,
+                "median": 3104.4,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.13,
+                "median": 1.68,
+                "max": 4.33
+              },
+              "fclk_mhz": {
+                "min": 1401.9,
+                "median": 1487.2,
+                "max": 1581.4
+              },
+              "free_ram_gb": {
+                "min": 17.04,
+                "median": 17.12,
+                "max": 18.15
+              },
+              "gpu_clk_mhz": {
+                "min": 2189.0,
+                "median": 2917.0,
+                "max": 3076.0
+              },
+              "gpu_temp_c": {
+                "min": 56.8,
+                "median": 64.45,
+                "max": 69.9
+              },
+              "host_cpu_pct": {
+                "min": 0.65,
+                "median": 1.91,
+                "max": 7.86
+              },
+              "mclk_mhz": {
+                "min": 2795.0,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 38.7,
+                "median": 54.65,
+                "max": 63.0
+              },
+              "tctl_c": {
+                "min": 60.9,
+                "median": 66.15,
+                "max": 69.6
+              },
+              "uclk_mhz": {
+                "min": 1302.9,
+                "median": 1375.95,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [
+              "compattelrunner.exe"
+            ],
+            "births_recorded": [
+              "compattelrunner.exe"
+            ],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": false,
+            "taint": []
+          },
+          {
+            "name": "rc-q27-10111940-D-b2-p-r2-short",
+            "start": "2026-10-12T00:06:32.9368645Z",
+            "end": "2026-10-12T00:06:45.0442305Z",
+            "n_samples": 12,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 1996.4,
+                "median": 4012.75,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.64,
+                "median": 1.36,
+                "max": 1.82
+              },
+              "fclk_mhz": {
+                "min": 1254.1,
+                "median": 1455.35,
+                "max": 1704.7
+              },
+              "free_ram_gb": {
+                "min": 16.84,
+                "median": 16.97,
+                "max": 16.99
+              },
+              "gpu_clk_mhz": {
+                "min": 1526.0,
+                "median": 2833.0,
+                "max": 3006.0
+              },
+              "gpu_temp_c": {
+                "min": 52.8,
+                "median": 66.0,
+                "max": 67.0
+              },
+              "host_cpu_pct": {
+                "min": 0.78,
+                "median": 1.85,
+                "max": 5.33
+              },
+              "mclk_mhz": {
+                "min": 2395.7,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 25.3,
+                "median": 52.9,
+                "max": 55.3
+              },
+              "tctl_c": {
+                "min": 61.5,
+                "median": 66.5,
+                "max": 67.6
+              },
+              "uclk_mhz": {
+                "min": 1169.1,
+                "median": 1356.5,
+                "max": 1363.3
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [],
+            "births_recorded": [],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": false,
+            "taint": []
+          },
+          {
+            "name": "rc-q27-10111940-D-b2-p-r2-long",
+            "start": "2026-10-12T00:06:45.0595152Z",
+            "end": "2026-10-12T00:07:03.1467207Z",
+            "n_samples": 18,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 1996.4,
+                "median": 3104.4,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.07,
+                "median": 1.23,
+                "max": 2.6
+              },
+              "fclk_mhz": {
+                "min": 1064.0,
+                "median": 1497.3,
+                "max": 1552.2
+              },
+              "free_ram_gb": {
+                "min": 16.97,
+                "median": 17.14,
+                "max": 17.46
+              },
+              "gpu_clk_mhz": {
+                "min": 1240.0,
+                "median": 2955.0,
+                "max": 3086.0
+              },
+              "gpu_temp_c": {
+                "min": 49.7,
+                "median": 68.7,
+                "max": 72.3
+              },
+              "host_cpu_pct": {
+                "min": 0.46,
+                "median": 1.2,
+                "max": 8.28
+              },
+              "mclk_mhz": {
+                "min": 2395.7,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 13.2,
+                "median": 55.7,
+                "max": 63.1
+              },
+              "tctl_c": {
+                "min": 57.9,
+                "median": 68.9,
+                "max": 71.9
+              },
+              "uclk_mhz": {
+                "min": 940.5,
+                "median": 1392.4,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [],
+            "births_recorded": [],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": false,
+            "taint": []
+          }
+        ],
+        "clean_rounds": 4,
+        "cpu_bar_pct": 10.0,
+        "ignored_procs": []
+      },
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.00.238.444 I srv  server_prefl: preselected DFlash2 shared driver (block_size=8, draft-max=6)\r",
+        "0.00.244.279 I srv  server_prepa: [spec] auto-selected Vulkan0 as the primary draft device\r",
+        "0.01.924.236 E llama_init_from_model: failed to initialize the context: dflash requires ctx_other to be set (this warning is normal during memory fitting)\r",
+        "0.01.978.046 W operator(): failed to measure the memory of the extra model, fitting without it: failed to create llama_context from model\r",
+        "0.09.603.709 I common_speculative_init_result: loading draft model 'C:\\ArifiLabs\\models\\hf\\incoai\\Qwen3.8-27B-DFlash2-GGUF-r0829\\Qwen3.8-27B-DFlash2-Q4_K_M.gguf'\r",
+        "0.10.453.198 I common_speculative_impl_draft_dflash: adding speculative implementation 'draft-dflash'\r",
+        "0.10.453.209 I common_speculative_impl_draft_dflash: - n_max=6, n_min=0, p_min=0.00\r",
+        "0.10.453.210 I common_speculative_impl_draft_dflash: - block_size=13, mask_token_id=248070, n_extract=5, sample_from_anchor=true\r",
+        "0.10.453.222 I common_speculative_impl_draft_dflash: DFlash2 depth mode: requested depth\r",
+        "0.10.453.225 I common_speculative_impl_draft_dflash: DFlash KV injection: legacy (encode + decode, default)\r",
+        "0.10.453.306 I common_speculative_impl_draft_dflash: DFlash2 draft attention: non-causal\r",
+        "0.13.568.995 I slot print_timing: id  0 | task 0 | draft acceptance = 0.71429 (    5 accepted /     7 generated), mean len =  3.50\r",
+        "0.13.568.996 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 5 accepted)\r",
+        "0.13.568.997 I slot print_timing: id  0 | task 0 | spec round cost  = draft 140977 us/2, verify 650186 us/2, plain 0 us/0, process 8978 us, save 0 us, restore 0 us\r",
+        "0.23.411.553 I slot print_timing: id  0 | task 5 | draft acceptance = 0.66447 (  101 accepted /   152 generated), mean len =  4.88\r",
+        "0.23.411.554 I slot print_timing: id  0 | task 5 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 101 accepted)\r",
+        "0.23.411.556 I slot print_timing: id  0 | task 5 | spec round cost  = draft 983638 us/26, verify 7754472 us/26, plain 0 us/0, process 127006 us, save 0 us, restore 0 us\r",
+        "0.40.967.374 I slot print_timing: id  0 | task 34 | draft acceptance = 0.54857 (   96 accepted /   175 generated), mean len =  4.20\r",
+        "0.40.967.376 I slot print_timing: id  0 | task 34 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 96 accepted)\r",
+        "0.40.967.381 I slot print_timing: id  0 | task 34 | spec round cost  = draft 1146062 us/30, verify 9300281 us/30, plain 338093 us/1, process 139539 us, save 0 us, restore 0 us\r",
+        "0.52.316.606 I slot print_timing: id  0 | task 69 | draft acceptance = 0.66447 (  101 accepted /   152 generated), mean len =  4.88\r",
+        "0.52.316.608 I slot print_timing: id  0 | task 69 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 101 accepted)\r",
+        "0.52.316.610 I slot print_timing: id  0 | task 69 | spec round cost  = draft 991397 us/26, verify 8168624 us/26, plain 0 us/0, process 161671 us, save 0 us, restore 0 us\r",
+        "1.10.722.244 I slot print_timing: id  0 | task 98 | draft acceptance = 0.54857 (   96 accepted /   175 generated), mean len =  4.20\r",
+        "1.10.722.245 I slot print_timing: id  0 | task 98 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 96 accepted)\r",
+        "1.10.722.246 I slot print_timing: id  0 | task 98 | spec round cost  = draft 1170666 us/30, verify 9231409 us/30, plain 223812 us/1, process 147988 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-12T00:07:06.7651466Z"
+    },
+    {
+      "arm": "D-a2-g",
+      "args": [
+        "-m",
+        "C:\\ArifiLabs\\models\\hf\\huihui-ai\\Huihui-Qwen3.8-27B-abliterated-UD-GGUF\\Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf",
+        "-dev",
+        "Vulkan0",
+        "-ngl",
+        "999",
+        "-fa",
+        "on",
+        "-c",
+        "8192",
+        "-b",
+        "1024",
+        "-ub",
+        "512",
+        "-t",
+        "16",
+        "-tb",
+        "32",
+        "-ctk",
+        "q8_0",
+        "-ctv",
+        "q8_0",
+        "--parallel",
+        "1",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "--ctx-checkpoints",
+        "32",
+        "--ctx-checkpoints-device",
+        "off",
+        "--ctx-checkpoints-toolcall",
+        "on",
+        "--spec-type",
+        "draft-dflash",
+        "-md",
+        "C:\\ArifiLabs\\models\\hf\\incoai\\Qwen3.8-27B-DFlash2-GGUF-r0829\\Qwen3.8-27B-DFlash2-Q4_K_M.gguf",
+        "--dflash-defer-injection",
+        "0",
+        "--spec-draft-n-max",
+        "6"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 1276948480.0,
+      "started_utc": "2026-10-12T00:07:39.1983399Z",
+      "healthy": true,
+      "peak_ws_bytes": 2497765376,
+      "peak_private_bytes": 23609405440,
+      "min_avail_bytes": 16940994560,
+      "avail_before_bytes": 19603800064,
+      "requests": [
+        {
+          "tag": "rc-q27-10111940-D-a2-g-warmup-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=12.68 ttft_ms=997.5 gen_n=8 decode_tps=7.7 draft=5/7"
+        },
+        {
+          "tag": "rc-q27-10111940-D-a2-g-r1-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=16.79 ttft_ms=734.1 gen_n=128 decode_tps=14.09 draft=101/152"
+        },
+        {
+          "tag": "rc-q27-10111940-D-a2-g-r1-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=95.54 ttft_ms=6325.8 gen_n=128 decode_tps=11.41 draft=96/175"
+        },
+        {
+          "tag": "rc-q27-10111940-D-a2-g-r2-short",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=12 prefill_tps=16.4 ttft_ms=886.7 gen_n=128 decode_tps=13.98 draft=101/152"
+        },
+        {
+          "tag": "rc-q27-10111940-D-a2-g-r2-long",
+          "exit": 0,
+          "summary": "path=completion regime=greedy prompt_n=597 prefill_tps=106.68 ttft_ms=5750.2 gen_n=128 decode_tps=11.31 draft=96/175"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 16944,
+      "load_s": 10.6,
+      "box": {
+        "rounds": [
+          {
+            "name": "rc-q27-10111940-D-a2-g-r1-short",
+            "start": "2026-10-12T00:07:55.1440456Z",
+            "end": "2026-10-12T00:08:05.1691056Z",
+            "n_samples": 10,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 1996.4,
+                "median": 4921.1,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.91,
+                "median": 1.14,
+                "max": 1.77
+              },
+              "fclk_mhz": {
+                "min": 1133.2,
+                "median": 1451.5,
+                "max": 1497.3
+              },
+              "free_ram_gb": {
+                "min": 17.98,
+                "median": 18.08,
+                "max": 18.13
+              },
+              "gpu_clk_mhz": {
+                "min": 1386.0,
+                "median": 2818.0,
+                "max": 3085.0
+              },
+              "gpu_temp_c": {
+                "min": 45.9,
+                "median": 55.8,
+                "max": 62.8
+              },
+              "host_cpu_pct": {
+                "min": 0.98,
+                "median": 1.27,
+                "max": 3.31
+              },
+              "mclk_mhz": {
+                "min": 2395.7,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 17.6,
+                "median": 51.7,
+                "max": 54.3
+              },
+              "tctl_c": {
+                "min": 52.9,
+                "median": 60.85,
+                "max": 62.9
+              },
+              "uclk_mhz": {
+                "min": 1006.9,
+                "median": 1356.3,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [],
+            "births_recorded": [],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": false,
+            "taint": []
+          },
+          {
+            "name": "rc-q27-10111940-D-a2-g-r1-long",
+            "start": "2026-10-12T00:08:05.1847969Z",
+            "end": "2026-10-12T00:08:23.3346455Z",
+            "n_samples": 18,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 1996.4,
+                "median": 3393.9,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.07,
+                "median": 1.46,
+                "max": 4.1
+              },
+              "fclk_mhz": {
+                "min": 1363.2,
+                "median": 1457.1,
+                "max": 1547.1
+              },
+              "free_ram_gb": {
+                "min": 16.91,
+                "median": 17.08,
+                "max": 18.11
+              },
+              "gpu_clk_mhz": {
+                "min": 2185.0,
+                "median": 2902.0,
+                "max": 3057.0
+              },
+              "gpu_temp_c": {
+                "min": 57.5,
+                "median": 63.8,
+                "max": 68.7
+              },
+              "host_cpu_pct": {
+                "min": 0.39,
+                "median": 3.58,
+                "max": 6.29
+              },
+              "mclk_mhz": {
+                "min": 2795.0,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 41.8,
+                "median": 52.9,
+                "max": 64.3
+              },
+              "tctl_c": {
+                "min": 60.2,
+                "median": 65.3,
+                "max": 68.4
+              },
+              "uclk_mhz": {
+                "min": 1274.3,
+                "median": 1353.7,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [
+              "compattelrunner.exe"
+            ],
+            "births_recorded": [
+              "compattelrunner.exe"
+            ],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": false,
+            "taint": []
+          },
+          {
+            "name": "rc-q27-10111940-D-a2-g-r2-short",
+            "start": "2026-10-12T00:08:23.3488541Z",
+            "end": "2026-10-12T00:08:35.417516Z",
+            "n_samples": 12,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 1996.4,
+                "median": 3104.4,
+                "max": 4921.1
+              },
+              "exempt_cpu_pct": {
+                "min": 0.0,
+                "median": 1.27,
+                "max": 1.75
+              },
+              "fclk_mhz": {
+                "min": 1319.7,
+                "median": 1433.85,
+                "max": 1497.3
+              },
+              "free_ram_gb": {
+                "min": 16.77,
+                "median": 16.94,
+                "max": 16.95
+              },
+              "gpu_clk_mhz": {
+                "min": 1718.0,
+                "median": 2903.0,
+                "max": 3070.0
+              },
+              "gpu_temp_c": {
+                "min": 55.5,
+                "median": 65.25,
+                "max": 67.4
+              },
+              "host_cpu_pct": {
+                "min": 0.72,
+                "median": 1.24,
+                "max": 2.85
+              },
+              "mclk_mhz": {
+                "min": 2395.7,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 29.7,
+                "median": 51.7,
+                "max": 55.4
+              },
+              "tctl_c": {
+                "min": 60.8,
+                "median": 66.1,
+                "max": 67.4
+              },
+              "uclk_mhz": {
+                "min": 1221.7,
+                "median": 1338.55,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [],
+            "births_recorded": [],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": false,
+            "taint": []
+          },
+          {
+            "name": "rc-q27-10111940-D-a2-g-r2-long",
+            "start": "2026-10-12T00:08:35.4326525Z",
+            "end": "2026-10-12T00:08:53.5472258Z",
+            "n_samples": 18,
+            "box": {
+              "cpu_clk_mhz": {
+                "min": 1587.1,
+                "median": 3104.4,
+                "max": 4511.9
+              },
+              "exempt_cpu_pct": {
+                "min": 0.06,
+                "median": 1.15,
+                "max": 2.65
+              },
+              "fclk_mhz": {
+                "min": 1056.6,
+                "median": 1453.7,
+                "max": 1506.5
+              },
+              "free_ram_gb": {
+                "min": 16.93,
+                "median": 17.1,
+                "max": 17.42
+              },
+              "gpu_clk_mhz": {
+                "min": 1118.0,
+                "median": 2811.5,
+                "max": 3079.0
+              },
+              "gpu_temp_c": {
+                "min": 48.5,
+                "median": 67.2,
+                "max": 72.0
+              },
+              "host_cpu_pct": {
+                "min": 0.71,
+                "median": 1.1,
+                "max": 2.79
+              },
+              "mclk_mhz": {
+                "min": 2395.7,
+                "median": 2795.0,
+                "max": 2795.0
+              },
+              "package_w": {
+                "min": 11.2,
+                "median": 53.1,
+                "max": 63.0
+              },
+              "tctl_c": {
+                "min": 56.8,
+                "median": 67.9,
+                "max": 71.6
+              },
+              "uclk_mhz": {
+                "min": 928.9,
+                "median": 1349.4,
+                "max": 1397.5
+              },
+              "power_plan": [
+                "381b4222-f694-41f0-9685-ff5bb260df2e (Balanced)"
+              ]
+            },
+            "new_procs": [],
+            "births_recorded": [],
+            "birth_taints": false,
+            "blind": [],
+            "fallback": [],
+            "tainted": false,
+            "taint": []
+          }
+        ],
+        "clean_rounds": 4,
+        "cpu_bar_pct": 10.0,
+        "ignored_procs": []
+      },
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.00.337.606 I srv  server_prefl: preselected DFlash2 shared driver (block_size=8, draft-max=6)\r",
+        "0.00.343.722 I srv  server_prepa: [spec] auto-selected Vulkan0 as the primary draft device\r",
+        "0.02.106.363 E llama_init_from_model: failed to initialize the context: dflash requires ctx_other to be set (this warning is normal during memory fitting)\r",
+        "0.02.161.285 W operator(): failed to measure the memory of the extra model, fitting without it: failed to create llama_context from model\r",
+        "0.09.382.135 I common_speculative_init_result: loading draft model 'C:\\ArifiLabs\\models\\hf\\incoai\\Qwen3.8-27B-DFlash2-GGUF-r0829\\Qwen3.8-27B-DFlash2-Q4_K_M.gguf'\r",
+        "0.10.224.722 I common_speculative_impl_draft_dflash: adding speculative implementation 'draft-dflash'\r",
+        "0.10.224.732 I common_speculative_impl_draft_dflash: - n_max=6, n_min=0, p_min=0.00\r",
+        "0.10.224.737 I common_speculative_impl_draft_dflash: - block_size=13, mask_token_id=248070, n_extract=5, sample_from_anchor=true\r",
+        "0.10.224.740 I common_speculative_impl_draft_dflash: DFlash2 depth mode: requested depth\r",
+        "0.10.224.743 I common_speculative_impl_draft_dflash: DFlash KV injection: legacy (encode + decode, default)\r",
+        "0.10.224.819 I common_speculative_impl_draft_dflash: DFlash2 draft attention: non-causal\r",
+        "0.12.573.971 I slot print_timing: id  0 | task 0 | draft acceptance = 0.71429 (    5 accepted /     7 generated), mean len =  3.50\r",
+        "0.12.573.973 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 5 accepted)\r",
+        "0.12.573.975 I slot print_timing: id  0 | task 0 | spec round cost  = draft 116897 us/2, verify 775342 us/2, plain 0 us/0, process 9343 us, save 0 us, restore 0 us\r",
+        "0.24.446.341 I slot print_timing: id  0 | task 5 | draft acceptance = 0.66447 (  101 accepted /   152 generated), mean len =  4.88\r",
+        "0.24.446.342 I slot print_timing: id  0 | task 5 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 101 accepted)\r",
+        "0.24.446.344 I slot print_timing: id  0 | task 5 | spec round cost  = draft 979421 us/26, verify 7878372 us/26, plain 0 us/0, process 120657 us, save 0 us, restore 0 us\r",
+        "0.42.193.751 I slot print_timing: id  0 | task 34 | draft acceptance = 0.54857 (   96 accepted /   175 generated), mean len =  4.20\r",
+        "0.42.193.752 I slot print_timing: id  0 | task 34 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 96 accepted)\r",
+        "0.42.193.754 I slot print_timing: id  0 | task 34 | spec round cost  = draft 1132010 us/30, verify 9489586 us/30, plain 320106 us/1, process 142236 us, save 0 us, restore 0 us\r",
+        "0.52.861.686 I slot print_timing: id  0 | task 69 | draft acceptance = 0.66447 (  101 accepted /   152 generated), mean len =  4.88\r",
+        "0.52.861.687 I slot print_timing: id  0 | task 69 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 101 accepted)\r",
+        "0.52.861.689 I slot print_timing: id  0 | task 69 | spec round cost  = draft 956214 us/26, verify 7902807 us/26, plain 0 us/0, process 158480 us, save 0 us, restore 0 us\r",
+        "1.11.957.042 I slot print_timing: id  0 | task 98 | draft acceptance = 0.54857 (   96 accepted /   175 generated), mean len =  4.20\r",
+        "1.11.957.043 I slot print_timing: id  0 | task 98 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 96 accepted)\r",
+        "1.11.957.045 I slot print_timing: id  0 | task 98 | spec round cost  = draft 1234400 us/30, verify 9570316 us/30, plain 225113 us/1, process 149607 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-12T00:08:57.1710435Z"
+    }
+  ],
+  "lite": true,
+  "build_sha": "cd2e2a6bd5d4afd4efb8e4b7697dff509129a730",
+  "integ_head": "a14473f76813a2a4b975de2a6da5b80536540b09",
+  "comparator_label": "v0.1.3.0 published (build-integ)",
+  "model": "q27",
+  "comparator": "g",
+  "slots": [
+    {
+      "tag": "P-a1",
+      "mode": "P",
+      "side": "a",
+      "bin": "g",
+      "arm": "P-a1-g",
+      "result": "ok",
+      "load_s": 10.3,
+      "min_avail_bytes": 17753096192
+    },
+    {
+      "tag": "P-b1",
+      "mode": "P",
+      "side": "b",
+      "bin": "p",
+      "arm": "P-b1-p",
+      "result": "ok",
+      "load_s": 6.6,
+      "min_avail_bytes": 17524477952
+    },
+    {
+      "tag": "P-b2",
+      "mode": "P",
+      "side": "b",
+      "bin": "p",
+      "arm": "P-b2-p",
+      "result": "ok",
+      "load_s": 5.6,
+      "min_avail_bytes": 17213177856
+    },
+    {
+      "tag": "P-a2",
+      "mode": "P",
+      "side": "a",
+      "bin": "g",
+      "arm": "P-a2-g",
+      "result": "ok",
+      "load_s": 10.6,
+      "min_avail_bytes": 14548455424
+    },
+    {
+      "tag": "M-a1",
+      "mode": "M",
+      "side": "a",
+      "bin": "g",
+      "arm": "M-a1-g",
+      "result": "ok",
+      "load_s": 7.6,
+      "min_avail_bytes": 17673551872
+    },
+    {
+      "tag": "M-b1",
+      "mode": "M",
+      "side": "b",
+      "bin": "p",
+      "arm": "M-b1-p",
+      "result": "ok",
+      "load_s": 6.6,
+      "min_avail_bytes": 17731313664
+    },
+    {
+      "tag": "M-b2",
+      "mode": "M",
+      "side": "b",
+      "bin": "p",
+      "arm": "M-b2-p",
+      "result": "ok",
+      "load_s": 6.6,
+      "min_avail_bytes": 17783160832
+    },
+    {
+      "tag": "M-a2",
+      "mode": "M",
+      "side": "a",
+      "bin": "g",
+      "arm": "M-a2-g",
+      "result": "ok",
+      "load_s": 7.6,
+      "min_avail_bytes": 17760980992
+    },
+    {
+      "tag": "D-a1",
+      "mode": "D",
+      "side": "a",
+      "bin": "g",
+      "arm": "D-a1-g",
+      "result": "ok",
+      "load_s": 7.6,
+      "min_avail_bytes": 16970719232
+    },
+    {
+      "tag": "D-b1",
+      "mode": "D",
+      "side": "b",
+      "bin": "p",
+      "arm": "D-b1-p",
+      "result": "ok",
+      "load_s": 11.6,
+      "min_avail_bytes": 16945987584
+    },
+    {
+      "tag": "D-b2",
+      "mode": "D",
+      "side": "b",
+      "bin": "p",
+      "arm": "D-b2-p",
+      "result": "ok",
+      "load_s": 11.6,
+      "min_avail_bytes": 16971427840
+    },
+    {
+      "tag": "D-a2",
+      "mode": "D",
+      "side": "a",
+      "bin": "g",
+      "arm": "D-a2-g",
+      "result": "ok",
+      "load_s": 10.6,
+      "min_avail_bytes": 16940994560
+    }
+  ],
+  "plan": {
+    "sampled": [
+      [
+        "s",
+        "short",
+        "128s"
+      ],
+      [
+        "s",
+        "chat",
+        "512s"
+      ],
+      [
+        "s",
+        "code",
+        "512s"
+      ],
+      [
+        "s",
+        "json",
+        "512s"
+      ],
+      [
+        "s",
+        "reason",
+        "768s"
+      ]
+    ],
+    "core": [
+      [
+        "warmup",
+        "short",
+        8
+      ],
+      [
+        "r1",
+        "short",
+        128
+      ],
+      [
+        "r1",
+        "long",
+        128
+      ],
+      [
+        "r2",
+        "short",
+        128
+      ],
+      [
+        "r2",
+        "long",
+        128
+      ],
+      [
+        "t",
+        "chat",
+        512
+      ],
+      [
+        "t",
+        "code",
+        512
+      ],
+      [
+        "t",
+        "json",
+        512
+      ],
+      [
+        "t",
+        "reason",
+        768
+      ]
+    ]
+  },
+  "prompts": {
+    "short": "C:\\ArifiLabs\\cache\\mtp-x1-lane\\cells\\sg-short.txt",
+    "long": "C:\\ArifiLabs\\cache\\strata-x1\\prompt-long.txt",
+    "chat": "C:\\ArifiLabs\\cache\\mtp-x1-lane\\cells\\pgc-chat.txt",
+    "code": "C:\\ArifiLabs\\cache\\mtp-x1-lane\\cells\\pgc-code.txt",
+    "json": "C:\\ArifiLabs\\cache\\mtp-x1-lane\\cells\\pgc-json.txt",
+    "reason": "C:\\ArifiLabs\\cache\\mtp-x1-lane\\cells\\pgc-reason.txt"
+  },
+  "trim_ws": "trimmed 181 processes; available MB 15270 -> 19642",
+  "start_P-a1-g": {
+    "committed_GB": 10.77,
+    "waited_s": 32.0,
+    "avail_GB": 20.13
+  },
+  "start_P-b1-p": {
+    "committed_GB": 10.3,
+    "waited_s": 31.0,
+    "avail_GB": 19.48
+  },
+  "start_P-b2-p": {
+    "committed_GB": 10.54,
+    "waited_s": 31.0,
+    "avail_GB": 19.01
+  },
+  "start_P-a2-g": {
+    "committed_GB": 10.64,
+    "waited_s": 31.0,
+    "avail_GB": 18.91
+  },
+  "start_M-a1-g": {
+    "committed_GB": 10.02,
+    "waited_s": 31.0,
+    "avail_GB": 19.56
+  },
+  "start_M-b1-p": {
+    "committed_GB": 9.95,
+    "waited_s": 31.0,
+    "avail_GB": 19.61
+  },
+  "start_M-b2-p": {
+    "committed_GB": 9.93,
+    "waited_s": 31.0,
+    "avail_GB": 19.75
+  },
+  "start_M-a2-g": {
+    "committed_GB": 10.09,
+    "waited_s": 31.0,
+    "avail_GB": 19.52
+  },
+  "start_D-a1-g": {
+    "committed_GB": 10.01,
+    "waited_s": 31.0,
+    "avail_GB": 19.61
+  },
+  "start_D-b1-p": {
+    "committed_GB": 10.0,
+    "waited_s": 31.0,
+    "avail_GB": 19.59
+  },
+  "start_D-b2-p": {
+    "committed_GB": 9.98,
+    "waited_s": 31.0,
+    "avail_GB": 19.64
+  },
+  "start_D-a2-g": {
+    "committed_GB": 9.98,
+    "waited_s": 31.0,
+    "avail_GB": 19.6
+  },
+  "finished_utc": "2026-10-12T00:08:57.1821329Z"
+}

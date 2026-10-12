@@ -17,34 +17,25 @@ third number counts releases, the fourth counts fix releases on top of one.
 
 | Model file | Mode | Draft depth | Drafter | Key server flags | Decode t/s, short / ~600-token prompt | Prompt t/s (~600 tokens) | Decode gain over plain |
 |---|---|---|---|---|---|---|---|
-| Qwen3.8-Flash-Next GSQ-RCO IQ3_S (ISTA-DASLab) | plain | - | - | `-ngl 999 -fa on --lazy-mode on -lm dio -c 4096` | 11.84 / 11.72 | 146.3 | - |
-| same | MTP (sidecar head) | 3 | `mtp-sidecar-qwen4exp-q8_0.gguf` | plain flags + `--spec-type draft-mtp --spec-draft-p-min 0.5` | 19.44 / 17.62 | 139.3 | +64.1% / +50.3% |
-| same | MTP + 40K draft vocabulary | 3 | `mtp-sidecar-qwen4exp-q8_0-dven40k.gguf` | same as the MTP row | **19.93 / 19.27** | 139.6 | **+68.3% / +64.4%** |
-| Ornith-1.5 35B-A3B Q4_K_M | plain | - | - | `-ngl 999 -fa on -lm dio --lazy-mode on -c 4096 -b 2048 -ub 512` | 29.18 / 28.78 | **420.1** | - |
-| same | MTP (built-in head) | 3 | head in the model file | plain flags + `--spec-type draft-mtp --spec-draft-p-min 0.5` | **33.74 / 34.45** | 413.2 | +15.6% / +19.7% |
-| same | DFlash2 | 2 | `Ornith-1.5-35B-A3B-DFlash2-BF16.gguf` | plain flags + `--spec-type draft-dflash --dflash-defer-injection 0` | 31.97 / 33.43 | 392.8 | +9.5% / +16.1% |
-| Qwen3.8 27B UD-Q4_K_XL (Huihui abliterated) | plain | - | - | `-ngl 999 -fa on -c 8192 -b 1024 -ub 512 -ctk q8_0 -ctv q8_0 --ctx-checkpoints 32` | 4.62 / 4.61 | 106.3 | - |
-| same | MTP (built-in head) | 3 | head in the model file | plain flags + `--spec-type draft-mtp --spec-draft-p-min 0.5` | 10.16 / 9.90 | 103.3 | +119.9% / +114.7% |
-| same | DFlash2 | **6** ¹ | `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` | plain flags + `--spec-type draft-dflash --dflash-defer-injection 0` | **13.62 / 11.55** | 100.9 | **+194.8% / +150.5%** |
-| Qwen3.8 27B S-X8 v4.3, 7.5 bits per weight ([MarlaLabs](https://github.com/MarlaLabsAI/sx8-quantization)) | plain | - | - | `-ngl 999 -fa on -c 8192 -b 1024 -ub 512 -ctk q8_0 -ctv q8_0` | 2.94 / 2.94 | 92.6 | - |
-| same | DFlash2 | **6** ¹ | `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` | plain flags + `--spec-type draft-dflash --dflash-defer-injection 0` | **10.86 / 9.79** | 89.0 | **+269.3% / +232.9%** |
+| Qwen3.8-Flash-Next GSQ-RCO IQ3_S (ISTA-DASLab) | plain | - | - | `-ngl 999 -fa on --lazy-mode on -lm dio -c 4096` | 11.95 / 11.83 | 148.5 | - |
+| same | MTP (sidecar head) | 3 | `mtp-sidecar-qwen4exp-q8_0.gguf` | plain flags + `--spec-type draft-mtp --spec-draft-p-min 0.5` | 20.03 / 18.23 | 145.8 | +67.6% / +54.0% |
+| same | MTP + 40K draft vocabulary | 3 | `mtp-sidecar-qwen4exp-q8_0-dven40k.gguf` | same as the MTP row | **20.48 / 19.84** | 146.0 | **+71.3% / +67.7%** |
+| Ornith-1.5 35B-A3B Q4_K_M | plain | - | - | `-ngl 999 -fa on -lm dio --lazy-mode on -c 4096 -b 2048 -ub 512` | 29.61 / 29.16 | **420.9** | - |
+| same | MTP (built-in head) | 3 | head in the model file | plain flags + `--spec-type draft-mtp --spec-draft-p-min 0.5` | **34.37 / 35.15** | 415.3 | +16.0% / +20.5% |
+| same | DFlash2 | 2 | `Ornith-1.5-35B-A3B-DFlash2-BF16.gguf` | plain flags + `--spec-type draft-dflash --dflash-defer-injection 0` | 32.38 / 33.67 | 397.8 | +9.3% / +15.4% |
+| Qwen3.8 27B UD-Q4_K_XL (Huihui abliterated) | plain | - | - | `-ngl 999 -fa on -c 8192 -b 1024 -ub 512 -ctk q8_0 -ctv q8_0 --ctx-checkpoints 32` | 4.57 / 4.52 | 105.5 | - |
+| same | MTP (built-in head) | 3 | head in the model file | plain flags + `--spec-type draft-mtp --spec-draft-p-min 0.5` | 9.97 / 9.59 | 102.0 | +118.2% / +111.8% |
+| same | DFlash2 | **6** ¹ | `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` | plain flags + `--spec-type draft-dflash --dflash-defer-injection 0` | **13.72 / 11.61** | 100.6 | **+200.2% / +156.6%** |
+| Qwen3.8 27B S-X8 v4.3, 7.5 bits per weight ([MarlaLabs](https://github.com/MarlaLabsAI/sx8-quantization)) | plain | - | - | `-ngl 999 -fa on -c 8192 -b 1024 -ub 512 -ctk q8_0 -ctv q8_0` | 2.94 / 2.93 | 92.9 | - |
+| same | DFlash2 | **6** ¹ | `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` | plain flags + `--spec-type draft-dflash --dflash-defer-injection 0` | **10.96 / 9.72** | 88.0 | **+272.9% / +231.7%** |
 | GLM-5.3 Flash GSQ-RCO 3.0-bit, experts streamed from NVMe ² | DFlash2 | 2 | `GLM-5.3-Flash-DFlash2-Q8_0.gguf` | `--moe-cache 1536 -fa off -c 2048 -b 8 -ub 8` + `GGML_ARIFI_MOE_NVME=1` | 2.96 (chat) | 4.4–4.6 | - |
 
-Every row's full command line is in [How we run it](#how-we-run-it-radeon-890m). New in this release: **S-X8 with
-DFlash2 decodes 13.78% faster** (pooled, against v0.1.3.1), plus an MTP drafting fix and faster Flash-Next MTP (see
-[What is new](#what-is-new-in-this-release)). Greedy output ids are **identical to v0.1.3.1 on every request** of the
-v0.1.3.2 ship gate, all four models.
+Every row's full command line is in [How we run it](#how-we-run-it-radeon-890m). **Re-measured 2026-10-11, every row, against v0.1.3.0 (our first public release) on the same flags.** Engine wins since v0.1.3.0: **S-X8 with DFlash2 decodes +14.7% short / +13.0% long** (9.55 → 10.96 t/s), S-X8 prompt reading +8.3% on short prompts, and 27B Q4_K_XL DFlash2 long-prompt decode +2.6%. Every other row is level with v0.1.3.0 inside run-to-run noise. Greedy output ids are identical to v0.1.3.0 on every plain request.
 
-¹ Depth 6 for both 27B DFlash2 lines since v0.1.3.1 (3 and 4 before). In v0.1.3.2 the S-X8 line's short-prompt decode
-went 9.54 → **10.86 t/s**, same gate, same file, output identical. ² GLM-5.3 row: the v0.1.3.0 ship-gate number (8
+¹ Depth 6 for both 27B DFlash2 lines since v0.1.3.1 (3 and 4 before). The depth change works on v0.1.3.0 too (27B Q4_K_XL at depth 6 on the v0.1.3.0 build: 13.86 t/s short); the S-X8 gain above is engine work. ² GLM-5.3 row: the v0.1.3.0 ship-gate number (8
 launches ABBA, output ids exact on all 8).
 
-How we measure: each row is an A/B on one file against our previous release, `llama-server`, every round kept, means
-shown, greedy output ids compared on every row. The S-X8 rows are the v0.1.3.2 ship gate against v0.1.3.1 (receipts:
-[`evidence/v0.1.3.2/`](evidence/v0.1.3.2/)); the other rows are the v0.1.3.1 ship gate against v0.1.3.0, both arms
-alternated (ABBA) (receipts: [`evidence/v0.1.3.1/`](evidence/v0.1.3.1/)), and the v0.1.3.2 gate re-ran them with
-pooled decode +0.02% to +0.59% per model and output ids identical. Percent = (this ÷ plain - 1) × 100 on the shown means,
-cut to one decimal, never rounded up.
+How we measure: each row is an A/B on one file, `llama-server`, v0.1.3.2 against v0.1.3.0 on identical flags, both builds alternated (ABBA, two loads a side, two rounds of a short and a ~600-token prompt per load, greedy 128 tokens), every round kept, means shown, greedy output ids compared on every request (receipts: [`evidence/v0.1.3.2-recheck/`](evidence/v0.1.3.2-recheck/)). Earlier gates: [`evidence/v0.1.3.2/`](evidence/v0.1.3.2/), [`evidence/v0.1.3.1/`](evidence/v0.1.3.1/). Percent = (this ÷ plain - 1) × 100 on the shown means, cut to one decimal, never rounded up.
 Machine: Ryzen AI 9 HX 470, Radeon 890M, 96 GB DDR5-5600, 72 GB reserved for the GPU, Windows 11. Decode = 128 greedy
 tokens after a ~12-token and a ~600-token prompt.
 
@@ -61,9 +52,9 @@ Base: `-ngl 999 -np 1 -fa on --lazy-mode on -c 4096 -lm dio`
 
 | Mode | Draft depth | Drafter | Add to the base line | Decode t/s, short / long |
 |---|---|---|---|---|
-| plain | - | - | - | 11.84 / 11.72 |
-| MTP | 3 | `mtp-sidecar-qwen4exp-q8_0.gguf` (MTP sidecar) | `-md mtp-sidecar-qwen4exp-q8_0.gguf -ngld 999 --spec-type draft-mtp --spec-draft-n-max 3 --spec-draft-p-min 0.5` | 19.44 / 17.62 |
-| MTP + 40K draft vocabulary | 3 | `mtp-sidecar-qwen4exp-q8_0-dven40k.gguf` | `-md mtp-sidecar-qwen4exp-q8_0-dven40k.gguf -ngld 999 --spec-type draft-mtp --spec-draft-n-max 3 --spec-draft-p-min 0.5` | **19.93 / 19.27** |
+| plain | - | - | - | 11.95 / 11.83 |
+| MTP | 3 | `mtp-sidecar-qwen4exp-q8_0.gguf` (MTP sidecar) | `-md mtp-sidecar-qwen4exp-q8_0.gguf -ngld 999 --spec-type draft-mtp --spec-draft-n-max 3 --spec-draft-p-min 0.5` | 20.03 / 18.23 |
+| MTP + 40K draft vocabulary | 3 | `mtp-sidecar-qwen4exp-q8_0-dven40k.gguf` | `-md mtp-sidecar-qwen4exp-q8_0-dven40k.gguf -ngld 999 --spec-type draft-mtp --spec-draft-n-max 3 --spec-draft-p-min 0.5` | **20.48 / 19.84** |
 
 Where the MTP sidecars come from: we built both, because the quantized GSQ-RCO files do not carry the MTP block.
 `mtp-sidecar-qwen4exp-q8_0.gguf` is a small side GGUF holding only the MTP block: its head tensors come from
@@ -91,26 +82,26 @@ Base: `-ngl 999 -np 1 -fa on -c 4096 -ub 512 -b 2048 -lm dio --lazy-mode on`
 
 | Mode | Draft depth | Drafter | Add to the base line | Decode t/s, short / long |
 |---|---|---|---|---|
-| plain | - | - | - | 29.18 / 28.78 |
-| MTP | 3 | head inside the model file | `--spec-type draft-mtp --spec-draft-n-max 3 --spec-draft-p-min 0.5` | **33.74 / 34.45** |
-| DFlash2 | 2 | `Ornith-1.5-35B-A3B-DFlash2-BF16.gguf` (jzinno) | `-md Ornith-1.5-35B-A3B-DFlash2-BF16.gguf -ngld 999 --spec-type draft-dflash --spec-draft-n-max 2 --dflash-defer-injection 0` | 31.97 / 33.43 |
+| plain | - | - | - | 29.61 / 29.16 |
+| MTP | 3 | head inside the model file | `--spec-type draft-mtp --spec-draft-n-max 3 --spec-draft-p-min 0.5` | **34.37 / 35.15** |
+| DFlash2 | 2 | `Ornith-1.5-35B-A3B-DFlash2-BF16.gguf` (jzinno) | `-md Ornith-1.5-35B-A3B-DFlash2-BF16.gguf -ngld 999 --spec-type draft-dflash --spec-draft-n-max 2 --dflash-defer-injection 0` | 32.38 / 33.67 |
 
 **Qwen3.8 27B dense · UD-Q4_K_XL** (Huihui abliterated, huihui-ai) · file `Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf`
 Base: `-dev Vulkan0 -ngl 999 -fa on -c 8192 -b 1024 -ub 512 -ctk q8_0 -ctv q8_0 --parallel 1 --ctx-checkpoints 32 --ctx-checkpoints-device off --ctx-checkpoints-toolcall on`
 
 | Mode | Draft depth | Drafter | Add to the base line | Decode t/s, short / long |
 |---|---|---|---|---|
-| plain | - | - | - | 4.62 / 4.61 |
-| MTP | 3 | head inside the model file | `--spec-type draft-mtp --spec-draft-n-max 3 --spec-draft-p-min 0.5` | 10.16 / 9.90 |
-| DFlash2 | 6 | `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` (incoai) | `--spec-type draft-dflash -md Qwen3.8-27B-DFlash2-Q4_K_M.gguf --dflash-defer-injection 0 --spec-draft-n-max 6` | **13.62 / 11.55** |
+| plain | - | - | - | 4.57 / 4.52 |
+| MTP | 3 | head inside the model file | `--spec-type draft-mtp --spec-draft-n-max 3 --spec-draft-p-min 0.5` | 9.97 / 9.59 |
+| DFlash2 | 6 | `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` (incoai) | `--spec-type draft-dflash -md Qwen3.8-27B-DFlash2-Q4_K_M.gguf --dflash-defer-injection 0 --spec-draft-n-max 6` | **13.72 / 11.61** |
 
 **Qwen3.8 27B dense · S-X8 v4.3 format, 7.5 bits per weight** (MarlaLabs) · file `Qwen3.8-27B-SX8v43-id57.gguf` (retagged to our type 57 with `tools/gguf-retag-sx8/`)
 Base: `-dev Vulkan0 -ngl 999 -fa on -c 8192 -b 1024 -ub 512 -ctk q8_0 -ctv q8_0 --parallel 1`
 
 | Mode | Draft depth | Drafter | Add to the base line | Decode t/s, short / long |
 |---|---|---|---|---|
-| plain | - | - | - | 2.94 / 2.94 |
-| DFlash2 | 6 | `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` (incoai) | `--spec-type draft-dflash -md Qwen3.8-27B-DFlash2-Q4_K_M.gguf --dflash-defer-injection 0 --spec-draft-n-max 6` | **10.86 / 9.79** |
+| plain | - | - | - | 2.94 / 2.93 |
+| DFlash2 | 6 | `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` (incoai) | `--spec-type draft-dflash -md Qwen3.8-27B-DFlash2-Q4_K_M.gguf --dflash-defer-injection 0 --spec-draft-n-max 6` | **10.96 / 9.72** |
 
 **GLM-5.3 Flash MoE · GSQ-RCO 3.0-bit, routed experts streamed from NVMe** (pfeifferj) · file `GLM-5.3-Flash-GSQ-RCO-3.0bit.gguf`
 Base: `-dev Vulkan0 -ngl 999 --no-host --no-op-offload --no-warmup -fit off -lm mmap -fa off -c 2048 -b 8 -ub 8 -np 1 --moe-cache 1536` plus the environment in note ⁵
@@ -510,8 +501,8 @@ machine; no number moves between the 780M and the 890M.
 | `v0.1.3.1` | `b11178-v0.1.3.1` | 2026-10-09 | `b11178` | Fix release: draft depth 6 for both 27B DFlash2 lines, sparse-prefill mask fused into flash attention, IQ3_S NVMe expert-cache fix with a per-type test, DeepSeek-3.2 and dots3note load, Vulkan view and padded-batch mat-mul fixes, speculative-decoding and saved-state fixes, GGUF loader hardening, web UI on by default | Radeon 890M: Qwen3.8 27B Q4_K_XL DFlash2 **13.62 / 11.55 t/s**, S-X8 DFlash2 9.54 / 8.57, Ornith-1.5 MTP 33.74 / 34.45, Flash-Next MTP 40K 19.93 / 19.27; output ids identical to v0.1.3.0 | [`evidence/v0.1.3.1/`](evidence/v0.1.3.1/) `pg-*` |
 | `v0.1.3.2` | `b11178-v0.1.3.2` | 2026-10-10 | `b11178` | Point release: S-X8 DFlash2 Q8_0 mat-vec rows, Flash-Next IQ2_S gather from the constant grid, sparse flash attention once-per-tile columns, MTP drafting reads current K after a freed KV cell is zeroed, upstream #29761 MTP-layout Flash-Next GGUFs load and draft, opt-in `GGML_ARIFI_MOE_NOUNROLL` | Radeon 890M: S-X8 DFlash2 **10.86 / 9.79 t/s** (+13.78% pooled vs v0.1.3.1); output ids identical to v0.1.3.1 on all four models | [`evidence/v0.1.3.2/`](evidence/v0.1.3.2/) `rg-*` |
 
-On the 890M, from `x1i` to this release: Qwen3.8 27B Q4_K_XL with DFlash2 rose from 10.46 to 13.62 t/s on the short
-prompt (+30.2%), and Ornith-1.5 35B rose from 29.51 / 31.23 t/s (DFlash2) to 33.74 / 34.45 t/s (MTP). Short / long = a ~12-token and
+On the 890M, from `x1i` to this release: Qwen3.8 27B Q4_K_XL with DFlash2 rose from 10.46 to 13.72 t/s on the short
+prompt (+31.1%), and Ornith-1.5 35B rose from 29.51 / 31.23 t/s (DFlash2) to 34.37 / 35.15 t/s (MTP). Short / long = a ~12-token and
 a ~600-token prompt, means of 2 timed rounds per launch (launches per arm are listed in each gate record under `evidence/`).
 
 ## For format authors and researchers
